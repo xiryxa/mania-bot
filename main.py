@@ -13,6 +13,7 @@ from handlers.admin import admin_router
 from handlers.admin_products import router as products_router
 from handlers.callbacks import router as callbacks_router
 from handlers.fallback import router as fallback_router
+from handlers.navigation import router as navigation_router
 from handlers.router import router as user_router
 from handlers.shop import router as shop_router
 
@@ -33,6 +34,7 @@ dp = Dispatcher()
 # ==================== ПОДКЛЮЧЕНИЕ РОУТЕРОВ ====================
 dp.include_router(admin_router)
 dp.include_router(user_router)
+dp.include_router(navigation_router)
 dp.include_router(callbacks_router)
 dp.include_router(products_router)
 dp.include_router(shop_router)

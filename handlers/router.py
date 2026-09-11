@@ -15,7 +15,8 @@ from email_validator import EmailNotValidError, validate_email
 from utils.validators import validate_fullname, validate_phone, validate_city
 from db import add_user, escape_html, get_user_by_telegram_id, update_user
 from forms.users import Form
-from handlers.callbacks import about_message, show_profile, start_register_message
+from handlers.navigation import about_message
+from handlers.callbacks import show_profile, start_register_message
 
 # ==================== РОУТЕР ====================
 router = Router()
