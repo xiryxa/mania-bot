@@ -21,7 +21,6 @@ from db import (
     get_product_stock,
     get_user_by_telegram_id,
     get_user_orders_count,
-    get_user_orders_paginated,
     LOW_STOCK_THRESHOLD,
     update_order_status,
 )

@@ -255,24 +255,6 @@ async def get_products_by_category(category: str) -> list:
 
 
 # ==================== РАБОТА С ЗАКАЗАМИ ====================
-async def get_user_orders(user_id: int):
-    """Получить все заказы пользователя"""
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute("""
-            SELECT
-                orders.id,
-                products.name,
-                orders.quantity,
-                orders.delivery_method,
-                orders.delivery_address,
-                orders.status,
-                orders.created_at
-            FROM orders
-            LEFT JOIN products ON orders.product_id = products.id
-            WHERE orders.user_id = ?
-            ORDER BY orders.created_at DESC
-        """, (user_id,))
-        return await cursor.fetchall()
 
 
 async def get_orders():
@@ -371,28 +353,6 @@ async def get_orders_count(status_filter: str = None) -> int:
         return result[0] if result else 0
 
 
-async def get_user_orders_paginated(user_id: int, offset: int = 0, limit: int = 5):
-    """Получить заказы пользователя с пагинацией"""
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute("""
-            SELECT
-                orders.id,
-                products.name,
-                orders.quantity,
-                orders.delivery_method,
-                orders.delivery_address,
-                orders.status,
-                orders.comment,
-                orders.created_at,
-                orders.unit_price
-            FROM orders
-            LEFT JOIN products ON orders.product_id = products.id
-            WHERE orders.user_id = ?
-            ORDER BY orders.created_at DESC
-            LIMIT ? OFFSET ?
-        """, (user_id, limit, offset))
-        return await cursor.fetchall()
-
 
 async def get_user_orders_count(user_id: int) -> int:
     """Получить количество заказов пользователя"""
@@ -416,18 +376,14 @@ async def create_order_and_decrease_stock(
     """
     Создаёт заказ, обновляет адрес пользователя и списывает остаток.
     Всё в одной транзакции.
-
-    Возвращает:
-    {
-        'success': True/False,
-        'message': str,
-        'order_id': int | None
-    }
+    
+    Списание остатка — атомарный UPDATE с условием quantity >= ?, 
+    защищено от race condition.
     """
     async with aiosqlite.connect(DATABASE) as db:
-        # 1. Проверяем остаток и получаем цену
+        # 1. Получаем цену товара (для записи в orders.unit_price)
         cursor = await db.execute(
-            "SELECT quantity, price FROM products WHERE id = ?",
+            "SELECT price FROM products WHERE id = ?",
             (product_id,),
         )
         result = await cursor.fetchone()
@@ -435,17 +391,30 @@ async def create_order_and_decrease_stock(
         if not result:
             return {"success": False, "message": "Товар не найден.", "order_id": None}
 
-        current_stock = result[0]
-        unit_price = result[1]
+        unit_price = result[0]
 
-        if current_stock < quantity:
+        # 2. Атомарное списание остатка с проверкой
+        cursor = await db.execute(
+            "UPDATE products SET quantity = quantity - ? "
+            "WHERE id = ? AND quantity >= ?",
+            (quantity, product_id, quantity),
+        )
+
+        if cursor.rowcount != 1:
+            # Товара не хватило — узнаём актуальный остаток для сообщения
+            cursor = await db.execute(
+                "SELECT quantity FROM products WHERE id = ?",
+                (product_id,),
+            )
+            stock_row = await cursor.fetchone()
+            current_stock = stock_row[0] if stock_row else 0
             return {
                 "success": False,
                 "message": f"Недостаточно товара на складе. Доступно: {current_stock} шт.",
                 "order_id": None,
             }
 
-        # 2. Сохраняем заказ
+        # 3. Сохраняем заказ
         await db.execute(
             "INSERT INTO orders "
             "(user_id, product_id, quantity, delivery_method, delivery_address, comment, unit_price) "
@@ -453,22 +422,15 @@ async def create_order_and_decrease_stock(
             (user_id, product_id, quantity, delivery_method, delivery_address, comment, unit_price),
         )
 
-        # 3. Получаем ID созданного заказа
+        # 4. Получаем ID созданного заказа
         cursor = await db.execute("SELECT last_insert_rowid()")
         order_id_row = await cursor.fetchone()
         order_id = order_id_row[0] if order_id_row else None
 
-        # 4. Обновляем адрес пользователя
+        # 5. Обновляем адрес пользователя
         await db.execute(
             "UPDATE users SET address = ? WHERE id = ?",
             (delivery_address, user_id),
-        )
-
-        # 5. Списываем остаток
-        new_stock = current_stock - quantity
-        await db.execute(
-            "UPDATE products SET quantity = ? WHERE id = ?",
-            (new_stock, product_id),
         )
 
         await db.commit()
