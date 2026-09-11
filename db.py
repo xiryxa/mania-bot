@@ -433,13 +433,18 @@ async def get_orders_count(status_filter: str = None) -> int:
     """Получить количество заказов с фильтром"""
     async with aiosqlite.connect(DATABASE) as db:
         if status_filter == "active":
-            where_clause = "WHERE status IN ('новый', 'в обработке', 'отправлен')"
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM orders WHERE status IN (?, ?, ?)",
+                ("новый", "в обработке", "отправлен"),
+            )
         elif status_filter == "completed":
-            where_clause = "WHERE status IN ('доставлен', 'отменён')"
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM orders WHERE status IN (?, ?)",
+                ("доставлен", "отменён"),
+            )
         else:
-            where_clause = ""
+            cursor = await db.execute("SELECT COUNT(*) FROM orders")
 
-        cursor = await db.execute(f"SELECT COUNT(*) FROM orders {where_clause}")
         result = await cursor.fetchone()
         return result[0] if result else 0
 
