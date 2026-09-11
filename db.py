@@ -255,28 +255,6 @@ async def get_products_by_category(category: str) -> list:
 
 
 # ==================== РАБОТА С ЗАКАЗАМИ ====================
-async def save_order_and_update_address(
-    user_id: int,
-    product_id: int,
-    quantity: int,
-    delivery_method: str,
-    delivery_address: str,
-    comment: str = None,
-):
-    """Сохранить заказ и обновить адрес в профиле (одна транзакция)"""
-    async with aiosqlite.connect(DATABASE) as db:
-        await db.execute(
-            "INSERT INTO orders (user_id, product_id, quantity, delivery_method, delivery_address, comment) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, product_id, quantity, delivery_method, delivery_address, comment),
-        )
-        await db.execute(
-            "UPDATE users SET address = ? WHERE id = ?",
-            (delivery_address, user_id),
-        )
-        await db.commit()
-
-
 async def get_user_orders(user_id: int):
     """Получить все заказы пользователя"""
     async with aiosqlite.connect(DATABASE) as db:
