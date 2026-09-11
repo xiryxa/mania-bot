@@ -4,6 +4,7 @@ from .admin_products import router as products_router
 from .callbacks import router as callbacks_router
 from .fallback import router as fallback_router
 from .navigation import router as navigation_router
+from .profile import router as profile_router
 from .router import router as user_router
 
 # ==================== ЭКСПОРТЫ ====================
@@ -13,5 +14,6 @@ __all__ = [
     "callbacks_router",
     "fallback_router",
     "navigation_router",
+    "profile_router",
     "products_router",
 ]
