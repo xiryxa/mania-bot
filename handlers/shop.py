@@ -13,6 +13,7 @@ from aiogram.types import (
 )
 
 from db import escape_html, get_product_by_id, get_products_by_category
+from config import CATEGORY_MAP
 
 # ==================== НАСТРОЙКА ====================
 logger = logging.getLogger(__name__)
@@ -107,12 +108,8 @@ async def shop_products_list(callback: CallbackQuery, state: FSMContext):
     """
     category = callback.data.split("_")[2]
 
-    category_map = {
-        "goose": "гусь",
-        "duck": "утка",
-    }
-
-    category_ru = category_map.get(category, category)
+    
+    category_ru = CATEGORY_MAP.get(category, category)
     products = await get_products_by_category(category_ru)
 
     if not products:

@@ -24,6 +24,7 @@ from db import (
 )
 from filters import IsAdmin
 from forms.users import AdminProductEditState, AdminProductState
+from config import CATEGORY_MAP
 
 # ==================== НАСТРОЙКА ====================
 logger = logging.getLogger(__name__)
@@ -409,9 +410,8 @@ async def product_add_price(message: Message, state: FSMContext):
 )
 async def product_add_category_callback(callback: CallbackQuery, state: FSMContext):
     """Выбор категории через callback"""
-    category_map = {"goose": "гусь", "duck": "утка"}
     key = callback.data.split("_")[1]
-    category = category_map.get(key, key)
+    category = CATEGORY_MAP.get(key, key)
 
     data = await state.get_data()
     product_data = data.get("product_data", {})
