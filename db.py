@@ -302,52 +302,6 @@ async def get_orders():
         return await cursor.fetchall()
 
 
-async def get_orders_by_status(status: str):
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute("""
-            SELECT
-                orders.id,
-                users.fullname,
-                users.phone,
-                users.email,
-                products.name,
-                orders.quantity,
-                orders.status,
-                orders.created_at,
-                orders.unit_price,
-                orders.comment
-            FROM orders
-            LEFT JOIN users ON orders.user_id = users.id
-            LEFT JOIN products ON orders.product_id = products.id
-            WHERE orders.status = ?
-            ORDER BY orders.created_at DESC
-        """, (status,))
-        return await cursor.fetchall()
-
-
-async def get_active_orders():
-    """Получить активные заказы (новый, в обработке, отправлен)"""
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute("""
-            SELECT
-                orders.id,
-                users.fullname,
-                users.phone,
-                users.email,
-                users.city,
-                products.name,
-                orders.quantity,
-                orders.delivery_method,
-                orders.delivery_address,
-                orders.status,
-                orders.created_at
-            FROM orders
-            LEFT JOIN users ON orders.user_id = users.id
-            LEFT JOIN products ON orders.product_id = products.id
-            WHERE orders.status IN ('новый', 'в обработке', 'отправлен')
-            ORDER BY orders.created_at DESC
-        """)
-        return await cursor.fetchall()
 
 
 async def get_order_by_id(order_id: int):
@@ -901,22 +855,3 @@ async def check_and_notify_low_stock(
     return False
 
 
-async def reset_low_stock_notification(product_id: int):
-    """Сбросить флаг уведомления о низком остатке (при пополнении товара)"""
-    async with aiosqlite.connect(DATABASE) as db:
-        await db.execute(
-            "UPDATE products SET low_stock_notified = 0 WHERE id = ?",
-            (product_id,),
-        )
-        await db.commit()
-
-
-async def check_low_stock_notified(product_id: int) -> bool:
-    """Проверить, было ли уже отправлено уведомление о низком остатке"""
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute(
-            "SELECT low_stock_notified FROM products WHERE id = ?",
-            (product_id,),
-        )
-        result = await cursor.fetchone()
-        return bool(result and result[0])

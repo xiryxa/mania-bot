@@ -23,6 +23,7 @@ from db import (
     escape_html,
     format_moscow_time,
     get_orders,
+    get_user_count,
     get_users,
     return_stock_on_cancel,
     update_order_status,
@@ -186,8 +187,7 @@ async def show_admins_list(message: Message):
 
 
 async def show_stats(message: Message):
-    users = await get_users()
-    total_users = len(users)
+    total_users = await get_user_count()
     total_admins = len(ADMIN_IDS)
     text = (
         f"📊 <b>Статистика бота</b>\n\n"
