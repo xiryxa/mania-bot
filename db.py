@@ -215,29 +215,19 @@ async def get_product_stock(product_id: int) -> int:
 
 
 async def decrease_product_stock(product_id: int, quantity: int) -> bool:
-    """Уменьшить количество товара на складе. Возвращает True если успешно."""
+    """
+    Уменьшить количество товара на складе.
+    Атомарный UPDATE с проверкой остатка.
+    Возвращает True, если списание прошло успешно.
+    """
     async with aiosqlite.connect(DATABASE) as db:
         cursor = await db.execute(
-            "SELECT quantity FROM products WHERE id = ?",
-            (product_id,),
-        )
-        result = await cursor.fetchone()
-
-        if not result:
-            return False
-
-        current_stock = result[0]
-
-        if current_stock < quantity:
-            return False
-
-        new_stock = current_stock - quantity
-        await db.execute(
-            "UPDATE products SET quantity = ? WHERE id = ?",
-            (new_stock, product_id),
+            "UPDATE products SET quantity = quantity - ? "
+            "WHERE id = ? AND quantity >= ?",
+            (quantity, product_id, quantity),
         )
         await db.commit()
-        return True
+        return cursor.rowcount == 1
 
 
 async def get_products_by_category(category: str) -> list:
