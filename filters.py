@@ -3,6 +3,19 @@ from os import getenv
 
 from aiogram.filters import BaseFilter
 from aiogram.types import CallbackQuery, Message
+from dotenv import load_dotenv
+
+
+# ==================== ЗАГРУЗКА ПЕРЕМЕННЫХ ====================
+load_dotenv()
+
+
+# ==================== КОНСТАНТЫ ====================
+ADMIN_IDS = [
+    int(id.strip())
+    for id in getenv("ADMIN_IDS", "").split(",")
+    if id.strip()
+]
 
 
 # ==================== ФИЛЬТРЫ ====================
@@ -13,9 +26,4 @@ class IsAdmin(BaseFilter):
     """
 
     async def __call__(self, obj: CallbackQuery | Message) -> bool:
-        ADMIN_IDS = [
-            int(id.strip())
-            for id in getenv("ADMIN_IDS", "").split(",")
-            if id.strip()
-        ]
         return obj.from_user.id in ADMIN_IDS
