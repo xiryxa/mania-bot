@@ -9,35 +9,27 @@ from aiogram.types import (
     Message,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    InputMediaPhoto,
 )
 from db import (
     check_and_notify_low_stock,
     create_order_and_decrease_stock,
     escape_html,
-    format_moscow_time,
-    get_order_by_id,
     get_product_by_id,
     get_product_stock,
     get_user_by_telegram_id,
-    get_user_orders_count,
     LOW_STOCK_THRESHOLD,
-    update_order_status,
 )
 from forms.users import OrderState
+
 # ==================== НАСТРОЙКА ====================
 logger = logging.getLogger(__name__)
 router = Router()
 
 
-
-
-# ==================== ОСНОВНЫЕ CALLBACK-ЗАПРОСЫ ====================
-@router.callback_query(lambda c: c.data == "start_shop")
+# ==================== МАГАЗИН (НАВИГАЦИЯ) ====================
+@router.callback_query(F.data == "start_shop")
 async def start_shop_callback(callback: CallbackQuery):
     """Переход в магазин из главного меню (редактирует сообщение)"""
-    from handlers.shop import shop_main
-
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🦆 Манки", callback_data="shop_category_manks")],
@@ -55,70 +47,10 @@ async def start_shop_callback(callback: CallbackQuery):
         parse_mode=ParseMode.HTML,
     )
     await callback.answer()
-
-
-
-
-@router.callback_query(lambda c: c.data.startswith("product_") and c.data[8:].isdigit())
-async def product_detail(callback: CallbackQuery):
-    product_id = int(callback.data.split("_")[1])
-    product = await get_product_by_id(product_id)
-    if not product:
-        try:
-            await callback.message.edit_text("❌ Товар не найден.")
-        except Exception as e:
-            logger.warning(f"product_detail edit failed: {e}")
-            await callback.message.answer("❌ Товар не найден.")
-        await callback.answer()
-        return
-
-    description = escape_html(product[2] or "Описание отсутствует")
-    text = (
-        f"🔹 <b>{escape_html(product[1])}</b>\n"
-        f"🏷️ {escape_html(product[4])}\n"
-        f"📝 {description}\n"
-        f"💰 {product[3]} ₽\n"
-        f"✅ {'В наличии' if product[5] else 'Нет в наличии'}"
-    )
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📩 Заказать", callback_data=f"order_product_{product_id}")],
-            [InlineKeyboardButton(text="⬅️ Назад к списку", callback_data="back_to_shop")],
-        ]
-    )
-    try:
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        logger.warning(f"product_detail edit failed: {e}, sending new")
-        await callback.message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    await callback.answer()
-
-
-@router.callback_query(lambda c: c.data == "back_to_shop")
-async def back_to_shop(callback: CallbackQuery):
-    """Возврат в главное меню магазина (редактирует сообщение)"""
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🦆 Манки", callback_data="shop_category_manks")],
-            [InlineKeyboardButton(text="🛖 Засидки", callback_data="shop_category_zasadki")],
-            [InlineKeyboardButton(text="👕 Аксессуары", callback_data="shop_category_accessories")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")],
-        ]
-    )
-    await callback.message.edit_text(
-        "🛒 <b>Добро пожаловать в MANIA!</b>\n\n"
-        "Здесь вы можете заказать профессиональные манки для охоты на гуся и утку.\n\n"
-        "Выберите категорию:",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML,
-    )
-    await callback.answer()
-
-
 
 
 # ==================== ЗАКАЗЫ (FSM) ====================
-@router.callback_query(lambda c: c.data.startswith("order_product_"))
+@router.callback_query(F.data.startswith("order_product_"))
 async def order_product_callback(callback: CallbackQuery, state: FSMContext):
     """Выбор товара для заказа"""
     user_id = callback.from_user.id
@@ -157,291 +89,6 @@ async def order_product_callback(callback: CallbackQuery, state: FSMContext):
     await state.set_state(OrderState.quantity)
     await show_quantity_selector(callback.message, state)
     await callback.answer()
-
-
-@router.callback_query(lambda c: c.data == "profile_orders")
-async def profile_orders_callback(callback: CallbackQuery, state: FSMContext):
-    """Меню заказов пользователя с фильтрами"""
-    from db import get_user_orders_count_by_status, get_user_orders_count
-
-    await state.update_data(profile_orders_page=0, profile_orders_filter="all")
-
-    user_id = callback.from_user.id
-    total_new = await get_user_orders_count_by_status(user_id, ["новый", "в обработке", "отправлен"])
-    total_completed = await get_user_orders_count_by_status(user_id, ["доставлен", "отменён"])
-    total_all = await get_user_orders_count(user_id)
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
-
-    if total_new > 0:
-        keyboard.inline_keyboard.append(
-            [InlineKeyboardButton(text=f"🆕 Активные ({total_new})", callback_data="profile_orders_filter_new")]
-        )
-    if total_completed > 0:
-        keyboard.inline_keyboard.append(
-            [InlineKeyboardButton(text=f"✅ Завершённые ({total_completed})", callback_data="profile_orders_filter_completed")]
-        )
-    if total_all > 0:
-        keyboard.inline_keyboard.append(
-            [InlineKeyboardButton(text=f"📋 Все заказы ({total_all})", callback_data="profile_orders_filter_all")]
-        )
-
-    keyboard.inline_keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")])
-
-    if total_all == 0:
-        await callback.message.edit_text(
-            "📭 У вас пока нет заказов.\n\n"
-            "Перейдите в /shop, чтобы сделать первый заказ!",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")]
-                ]
-            ),
-            parse_mode=ParseMode.HTML,
-        )
-        await callback.answer()
-        return
-
-    await callback.message.edit_text(
-        "📋 <b>Мои заказы</b>\n\n"
-        "Выберите категорию для просмотра:",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML,
-    )
-    await callback.answer()
-
-
-@router.callback_query(lambda c: c.data.startswith("profile_orders_filter_"))
-async def profile_orders_filter_callback(callback: CallbackQuery, state: FSMContext):
-    """Показать заказы с выбранным фильтром"""
-    from db import get_user_orders_count_by_status
-
-    filter_type = callback.data.split("_")[3]
-    status_filter_map = {
-        "new": ["новый", "в обработке", "отправлен"],
-        "completed": ["доставлен", "отменён"],
-        "all": None,
-    }
-    status_filter = status_filter_map.get(filter_type)
-
-    user_id = callback.from_user.id
-    await state.update_data(profile_orders_filter=filter_type, profile_orders_page=0)
-    await show_profile_orders_list(callback.message, state, user_id, status_filter, page=0)
-    await callback.answer()
-
-
-async def show_profile_orders_list(
-    message: Message,
-    state: FSMContext,
-    user_id: int,
-    statuses: list = None,
-    page: int = 0,
-):
-    """Показать заказы пользователя с пагинацией и фильтром"""
-    from db import (
-        get_user_orders_paginated_by_status,
-        get_user_orders_count_by_status,
-        get_user_orders_count,
-        format_moscow_time,
-        get_product_by_id,
-    )
-
-    limit = 1
-    offset = page * limit
-
-    orders = await get_user_orders_paginated_by_status(user_id, statuses, offset, limit)
-
-    if statuses:
-        total = await get_user_orders_count_by_status(user_id, statuses)
-    else:
-        total = await get_user_orders_count(user_id)
-
-    total_pages = (total + limit - 1) // limit if total > 0 else 1
-
-    if not orders:
-        total_new = await get_user_orders_count_by_status(user_id, ["новый", "в обработке", "отправлен"])
-        total_completed = await get_user_orders_count_by_status(user_id, ["доставлен", "отменён"])
-        total_all = await get_user_orders_count(user_id)
-
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[])
-        if total_new > 0:
-            keyboard.inline_keyboard.append(
-                [InlineKeyboardButton(text=f"🆕 Активные ({total_new})", callback_data="profile_orders_filter_new")]
-            )
-        if total_completed > 0:
-            keyboard.inline_keyboard.append(
-                [InlineKeyboardButton(text=f"✅ Завершённые ({total_completed})", callback_data="profile_orders_filter_completed")]
-            )
-        if total_all > 0:
-            keyboard.inline_keyboard.append(
-                [InlineKeyboardButton(text=f"📋 Все заказы ({total_all})", callback_data="profile_orders_filter_all")]
-            )
-        keyboard.inline_keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")])
-
-        await message.edit_text(
-            "📭 В этой категории пока нет заказов.\n\n"
-            "Выберите другую категорию:",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
-        return
-
-    order = orders[0]
-    status = order[5] or "новый"
-
-    unit_price = order[9] if len(order) > 9 and order[9] else 0
-    quantity = order[2] or 0
-    total_price = quantity * unit_price
-
-    product_image = None
-    product_id = order[8]
-    if product_id:
-        product = await get_product_by_id(product_id)
-        if product and len(product) > 7:
-            product_image = product[7]
-
-    status_emoji = {
-        "новый": "🆕",
-        "в обработке": "🔄",
-        "отправлен": "📦",
-        "доставлен": "✅",
-        "отменён": "❌",
-    }
-    emoji = status_emoji.get(status, "📌")
-
-    data = await state.get_data()
-    filter_type = data.get("profile_orders_filter", "all")
-    filter_names = {
-        "new": "🆕 Активные заказы",
-        "completed": "✅ Завершённые заказы",
-        "all": "📋 Все заказы",
-    }
-    title = filter_names.get(filter_type, "📋 Все заказы")
-
-    text = (
-        f"{title}\n"
-        f"━━━━━━━━━━━━━━━━━\n"
-        f"📄 Заказ {page + 1} из {total_pages}\n\n"
-        f"{emoji} <b>Заказ #{order[0]}</b>\n"
-        f"━━━━━━━━━━━━━━━━━\n"
-        f"🛒 <b>Товар:</b> {escape_html(order[1])}\n"
-        f"📦 <b>Количество:</b> {quantity} шт.\n"
-        f"💰 <b>Цена за шт.:</b> {unit_price} ₽\n"
-        f"💵 <b>Сумма:</b> {total_price} ₽\n"
-        f"🚚 <b>Доставка:</b> {order[3]}\n"
-        f"📍 <b>Адрес:</b> {escape_html(order[4])}\n"
-    )
-    if order[10]:
-        text += f"📦 <b>Трек-номер:</b> {escape_html(order[10])}\n"
-    text += f"📅 <b>Дата:</b> {format_moscow_time(order[7])}\n"
-    text += f"📌 <b>Статус:</b> {status}\n"
-    if order[6]:
-        text += f"📝 <b>Комментарий:</b> {escape_html(order[6])}\n"
-
-    keyboard_buttons = []
-
-    if status == "отправлен":
-        keyboard_buttons.append(
-            [InlineKeyboardButton(text="✅ Я получил заказ", callback_data=f"confirm_delivery_{order[0]}")]
-        )
-
-    pagination_buttons = []
-    if page > 0:
-        pagination_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data="profile_orders_page_prev"))
-    if page < total_pages - 1:
-        pagination_buttons.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data="profile_orders_page_next"))
-    if pagination_buttons:
-        keyboard_buttons.append(pagination_buttons)
-
-    total_new = await get_user_orders_count_by_status(user_id, ["новый", "в обработке", "отправлен"])
-    total_completed = await get_user_orders_count_by_status(user_id, ["доставлен", "отменён"])
-    total_all = await get_user_orders_count(user_id)
-
-    filter_row = []
-    if total_new > 0:
-        filter_row.append(InlineKeyboardButton(text=f"🆕 {total_new}", callback_data="profile_orders_filter_new"))
-    if total_completed > 0:
-        filter_row.append(InlineKeyboardButton(text=f"✅ {total_completed}", callback_data="profile_orders_filter_completed"))
-    if total_all > 0:
-        filter_row.append(InlineKeyboardButton(text=f"📋 {total_all}", callback_data="profile_orders_filter_all"))
-    if filter_row:
-        keyboard_buttons.append(filter_row)
-
-    keyboard_buttons.append(
-        [InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="profile_orders_back_to_menu")]
-    )
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-
-    data = await state.get_data()
-    last_orders_photo_message_id = data.get("profile_last_photo_message_id")
-
-    # Если есть фото — используем edit_message_media
-    if product_image:
-        try:
-            if last_orders_photo_message_id:
-                # Редактируем существующее фото-сообщение
-                await message.bot.edit_message_media(
-                    chat_id=message.chat.id,
-                    message_id=last_orders_photo_message_id,
-                    media=InputMediaPhoto(
-                        media=product_image,
-                        caption=text,
-                        parse_mode=ParseMode.HTML,
-                    ),
-                    reply_markup=keyboard,
-                )
-                return
-            else:
-                # Первое фото — отправляем новое сообщение
-                photo_msg = await message.answer_photo(
-                    photo=product_image,
-                    caption=text,
-                    reply_markup=keyboard,
-                    parse_mode=ParseMode.HTML,
-                )
-                await state.update_data(profile_last_photo_message_id=photo_msg.message_id)
-                try:
-                    await message.delete()
-                except Exception:
-                    pass
-                return
-        except Exception as e:
-            error_text = str(e).lower()
-            # Если ошибка "message is not modified" — просто игнорируем
-            if "message is not modified" in error_text:
-                return
-            # Иначе — fallback с отправкой нового фото
-            logger.warning(f"Error editing/sending order photo in profile: {e}, fallback to new message")
-            photo_msg = await message.answer_photo(
-                photo=product_image,
-                caption=text,
-                reply_markup=keyboard,
-                parse_mode=ParseMode.HTML,
-            )
-            await state.update_data(profile_last_photo_message_id=photo_msg.message_id)
-            try:
-                await message.delete()
-            except Exception:
-                pass
-            return
-
-    # Если фото нет — текстовый вариант
-    if last_orders_photo_message_id:
-        # Удаляем старое фото-сообщение и сразу отправляем новое текстовое
-        try:
-            await message.bot.delete_message(chat_id=message.chat.id, message_id=last_orders_photo_message_id)
-        except Exception:
-            pass
-        await state.update_data(profile_last_photo_message_id=None)
-        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-        return
-
-    try:
-        await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        logger.warning(f"show_profile_orders_list edit failed: {e}, sending new")
-        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 
 async def show_quantity_selector(message: Message, state: FSMContext):
@@ -484,57 +131,7 @@ async def show_quantity_selector(message: Message, state: FSMContext):
         await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 
-@router.callback_query(lambda c: c.data == "profile_orders_back_to_menu")
-async def profile_orders_back_to_menu(callback: CallbackQuery, state: FSMContext):
-    """Возврат в меню выбора категорий заказов"""
-    from db import get_user_orders_count_by_status, get_user_orders_count
-
-    await state.update_data(profile_orders_page=0, profile_orders_filter="all")
-
-    data = await state.get_data()
-    last_id = data.get("profile_last_photo_message_id")
-    if last_id:
-        try:
-            await callback.bot.delete_message(chat_id=callback.message.chat.id, message_id=last_id)
-        except Exception:
-            pass
-        await state.update_data(profile_last_photo_message_id=None)
-
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
-
-    user_id = callback.from_user.id
-    total_new = await get_user_orders_count_by_status(user_id, ["новый", "в обработке", "отправлен"])
-    total_completed = await get_user_orders_count_by_status(user_id, ["доставлен", "отменён"])
-    total_all = await get_user_orders_count(user_id)
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
-    if total_new > 0:
-        keyboard.inline_keyboard.append(
-            [InlineKeyboardButton(text=f"🆕 Активные ({total_new})", callback_data="profile_orders_filter_new")]
-        )
-    if total_completed > 0:
-        keyboard.inline_keyboard.append(
-            [InlineKeyboardButton(text=f"✅ Завершённые ({total_completed})", callback_data="profile_orders_filter_completed")]
-        )
-    if total_all > 0:
-        keyboard.inline_keyboard.append(
-            [InlineKeyboardButton(text=f"📋 Все заказы ({total_all})", callback_data="profile_orders_filter_all")]
-        )
-    keyboard.inline_keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")])
-
-    await callback.message.answer(
-        "📋 <b>Мои заказы</b>\n\n"
-        "Выберите категорию для просмотра:",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML,
-    )
-    await callback.answer()
-
-
-@router.callback_query(lambda c: c.data.startswith("qty_"))
+@router.callback_query(F.data.startswith("qty_"))
 async def quantity_control(callback: CallbackQuery, state: FSMContext):
     """Управление количеством: ➖, ➕, ✅ Далее"""
     action = callback.data
@@ -645,7 +242,8 @@ async def ask_delivery_method(message: Message, state: FSMContext):
 
     await state.set_state(OrderState.delivery_method)
 
-@router.callback_query(lambda c: c.data.startswith("delivery_"))
+
+@router.callback_query(F.data.startswith("delivery_"))
 async def order_delivery(callback: CallbackQuery, state: FSMContext):
     """Выбор способа доставки"""
     method = callback.data.split("_")[1]
@@ -944,7 +542,7 @@ async def process_comment(message: Message, state: FSMContext):
     await create_order_from_state(message, state, user_id=message.from_user.id)
 
 
-@router.callback_query(lambda c: c.data == "order_cancel")
+@router.callback_query(F.data == "order_cancel")
 async def order_cancel(callback: CallbackQuery, state: FSMContext):
     """Отмена заказа"""
     await state.clear()
@@ -953,106 +551,4 @@ async def order_cancel(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.warning(f"order_cancel edit failed: {e}")
         await callback.message.answer("❌ Заказ отменён.")
-    await callback.answer()
-
-
-@router.callback_query(lambda c: c.data.startswith("profile_orders_page_"))
-async def profile_orders_page_callback(callback: CallbackQuery, state: FSMContext):
-    """Переключение страницы в заказах пользователя"""
-    data = await state.get_data()
-    page = data.get("profile_orders_page", 0)
-    filter_type = data.get("profile_orders_filter", "all")
-
-    if "prev" in callback.data:
-        page -= 1
-    elif "next" in callback.data:
-        page += 1
-    else:
-        try:
-            page = int(callback.data.split("_")[3])
-        except ValueError:
-            pass
-
-    await state.update_data(profile_orders_page=page)
-
-    user_id = callback.from_user.id
-    status_filter_map = {
-        "new": ["новый", "в обработке", "отправлен"],
-        "completed": ["доставлен", "отменён"],
-        "all": None,
-    }
-    statuses = status_filter_map.get(filter_type)
-
-    await show_profile_orders_list(callback.message, state, user_id, statuses, page)
-    await callback.answer()
-
-
-# ==================== ПОДТВЕРЖДЕНИЕ ПОЛУЧЕНИЯ ЗАКАЗА ====================
-@router.callback_query(lambda c: c.data.startswith("confirm_delivery_"))
-async def confirm_delivery_callback(callback: CallbackQuery, state: FSMContext):
-    """Подтверждение получения заказа покупателем"""
-    from db import get_order_by_id, notify_user_safe
-    from handlers.admin import ADMIN_IDS
-
-    await state.clear()
-
-    order_id = int(callback.data.split("_")[2])
-    user_id = callback.from_user.id
-
-    order = await get_order_by_id(order_id)
-    if not order:
-        await callback.message.edit_text("❌ Заказ не найден.")
-        await callback.answer()
-        return
-
-    if order[1] != user_id:
-        await callback.answer("❌ Это не ваш заказ.")
-        return
-
-    if order[10] != "отправлен":
-        await callback.message.edit_text(
-            "❌ Вы можете подтвердить получение только для заказов со статусом 'отправлен'.",
-            parse_mode=ParseMode.HTML,
-        )
-        await callback.answer()
-        return
-
-    await update_order_status(order_id, "доставлен")
-
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
-
-    await callback.message.answer(
-        f"✅ <b>Заказ #{order_id} отмечен как доставленный!</b>\n\n"
-        f"Спасибо, что пользуетесь нашими услугами!\n"
-        f"🦆 <i>Приманивайте и будьте с Манией!</i>",
-        parse_mode=ParseMode.HTML,
-    )
-
-    if ADMIN_IDS:
-        admin_chat_id = ADMIN_IDS[0]
-        product_name = order[6] or "не указан"
-        fullname = order[2] or "не указан"
-
-        unit_price = order[13] if len(order) > 13 and order[13] else 0
-        quantity = order[7] or 0
-        total_price = quantity * unit_price
-
-        admin_text = (
-            f"✅ <b>Клиент подтвердил получение заказа #{order_id}!</b>\n\n"
-            f"👤 Клиент: {escape_html(fullname)}\n"
-            f"🛒 Товар: {escape_html(product_name)}\n"
-            f"📦 Количество: {quantity} шт.\n"
-            f"💰 Цена за шт.: {unit_price} ₽\n"
-            f"💵 Сумма: {total_price} ₽\n"
-            f"🚚 Доставка: {order[8] or 'не указан'}\n"
-            f"📍 Адрес: {escape_html(order[9] or 'не указан')}\n"
-        )
-        if order[14]:
-            admin_text += f"📝 Комментарий: {escape_html(order[14])}\n"
-
-        await notify_user_safe(callback.bot, chat_id=admin_chat_id, text=admin_text)
-
     await callback.answer()
