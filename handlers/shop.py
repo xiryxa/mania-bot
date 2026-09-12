@@ -263,12 +263,18 @@ async def show_product_card(
 
     # Если фото нет — текстовый вариант
     if last_photo_message_id:
+        # Фото-сообщение было, но у нового товара фото нет.
+        # Удаляем старое фото-сообщение и сразу отправляем новое текстовое,
+        # не пытаясь edit_text на удалённом сообщении.
         try:
             await message.bot.delete_message(chat_id=message.chat.id, message_id=last_photo_message_id)
         except Exception:
             pass
         await state.update_data(shop_last_photo_message_id=None)
+        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        return
 
+    # Фото-сообщения не было — просто редактируем текущее текстовое
     try:
         await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
     except Exception:

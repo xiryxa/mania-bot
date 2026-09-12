@@ -220,11 +220,14 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
 
     # Если фото нет — текстовый вариант
     if last_photo_message_id:
+        # Удаляем старое фото-сообщение и сразу отправляем новое текстовое
         try:
             await message.bot.delete_message(chat_id=message.chat.id, message_id=last_photo_message_id)
         except Exception:
             pass
         await state.update_data(admin_last_photo_message_id=None)
+        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        return
 
     try:
         await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
@@ -1151,11 +1154,14 @@ async def show_deleted_product(message: Message, state: FSMContext, page: int):
 
     # Если фото нет — текстовый вариант
     if last_photo_message_id:
+        # Удаляем старое фото-сообщение и сразу отправляем новое текстовое
         try:
             await message.bot.delete_message(chat_id=message.chat.id, message_id=last_photo_message_id)
         except Exception:
             pass
         await state.update_data(deleted_last_photo_message_id=None)
+        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        return
 
     try:
         await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)

@@ -1007,11 +1007,14 @@ async def show_orders_list(
 
     # Если фото нет — текстовый вариант
     if last_orders_photo_message_id:
+        # Удаляем старое фото-сообщение и сразу отправляем новое текстовое
         try:
             await message.bot.delete_message(chat_id=message.chat.id, message_id=last_orders_photo_message_id)
         except Exception:
             pass
         await state.update_data(last_orders_photo_message_id=None)
+        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        return
 
     try:
         await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)

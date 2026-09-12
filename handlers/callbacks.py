@@ -428,11 +428,14 @@ async def show_profile_orders_list(
 
     # Если фото нет — текстовый вариант
     if last_orders_photo_message_id:
+        # Удаляем старое фото-сообщение и сразу отправляем новое текстовое
         try:
             await message.bot.delete_message(chat_id=message.chat.id, message_id=last_orders_photo_message_id)
         except Exception:
             pass
         await state.update_data(profile_last_photo_message_id=None)
+        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        return
 
     try:
         await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
@@ -786,10 +789,11 @@ async def comment_skip(callback: CallbackQuery, state: FSMContext):
             pass
 
     await state.update_data(comment=None)
-    await create_order_from_state(callback.message, state)
+    # Передаём user_id явно — callback.message.from_user это бот, а не пользователь
+    await create_order_from_state(callback.message, state, user_id=callback.from_user.id)
 
 
-async def create_order_from_state(message: Message, state: FSMContext):
+async def create_order_from_state(message: Message, state: FSMContext, user_id: int = None):
     """Создать заказ из данных в состоянии и отправить уведомление админу"""
     data = await state.get_data()
     user = data.get("user")
@@ -801,7 +805,12 @@ async def create_order_from_state(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    user_id = message.from_user.id
+    # Если user_id не передан явно — берём из message (для message-хэндлеров).
+    # Для callback-хэндлеров user_id передаётся явно из callback.from_user.id,
+    # потому что callback.message.from_user — это бот, а не пользователь.
+    if user_id is None:
+        user_id = message.from_user.id
+
     product_id = data.get("product_id")
     requested_quantity = data.get("quantity", 1)
     address = data.get("delivery_address")
@@ -931,7 +940,8 @@ async def process_comment(message: Message, state: FSMContext):
         pass
 
     await state.update_data(comment=comment)
-    await create_order_from_state(message, state)
+    # Передаём user_id явно — для консистентности с comment_skip
+    await create_order_from_state(message, state, user_id=message.from_user.id)
 
 
 @router.callback_query(lambda c: c.data == "order_cancel")
