@@ -10,11 +10,11 @@ from dotenv import load_dotenv
 from config import setup_bot_commands
 from db import init_db
 from handlers.admin import admin_router
-from handlers.admin_products import router as products_router
 from handlers.admin_broadcast import router as admin_broadcast_router
-from handlers.callbacks import router as callbacks_router
+from handlers.admin_products import router as products_router
 from handlers.fallback import router as fallback_router
 from handlers.navigation import router as navigation_router
+from handlers.orders import router as orders_router
 from handlers.profile import router as profile_router
 from handlers.profile_orders import router as profile_orders_router
 from handlers.router import router as user_router
@@ -44,7 +44,7 @@ dp.include_router(user_router)
 dp.include_router(navigation_router)
 dp.include_router(profile_router)
 dp.include_router(profile_orders_router)
-dp.include_router(callbacks_router)
+dp.include_router(orders_router)
 dp.include_router(products_router)
 dp.include_router(shop_router)
 dp.include_router(fallback_router)

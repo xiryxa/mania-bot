@@ -437,3 +437,26 @@ async def shop_manks_back(callback: CallbackQuery, state: FSMContext):
             parse_mode=ParseMode.HTML,
         )
     await callback.answer()
+    
+    
+# ==================== ПЕРЕХОД В МАГАЗИН ИЗ ГЛАВНОГО МЕНЮ ====================
+@router.callback_query(F.data == "start_shop")
+async def start_shop_callback(callback: CallbackQuery):
+    """Переход в магазин из главного меню (редактирует сообщение)"""
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🦆 Манки", callback_data="shop_category_manks")],
+            [InlineKeyboardButton(text="🛖 Засидки", callback_data="shop_category_zasadki")],
+            [InlineKeyboardButton(text="👕 Аксессуары", callback_data="shop_category_accessories")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")],
+        ]
+    )
+
+    await callback.message.edit_text(
+        "🛒 <b>Добро пожаловать в MANIA!</b>\n\n"
+        "Здесь вы можете заказать профессиональные манки для охоты на гуся и утку.\n\n"
+        "Выберите категорию:",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML,
+    )
+    await callback.answer()
