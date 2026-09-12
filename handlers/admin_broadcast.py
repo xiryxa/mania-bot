@@ -277,29 +277,20 @@ async def broadcast_confirm(callback: CallbackQuery, state: FSMContext):
         f"👥 Всего получателей: <b>{total}</b>"
     )
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="admin_back_to_panel")]
-        ]
-    )
-
     try:
         await callback.message.edit_caption(
             caption=result_text,
-            reply_markup=keyboard,
             parse_mode=ParseMode.HTML,
         )
     except Exception:
         try:
             await callback.message.edit_text(
                 result_text,
-                reply_markup=keyboard,
                 parse_mode=ParseMode.HTML,
             )
         except Exception:
             await callback.message.answer(
                 result_text,
-                reply_markup=keyboard,
                 parse_mode=ParseMode.HTML,
             )
 
