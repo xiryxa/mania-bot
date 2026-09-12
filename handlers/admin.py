@@ -69,6 +69,7 @@ async def show_admin_panel(message: Message, state: FSMContext):
             ],
             [InlineKeyboardButton(text="📋 Заказы", callback_data="admin_orders_menu")],
             [InlineKeyboardButton(text="📦 Управление товарами", callback_data="admin_products")],
+            [InlineKeyboardButton(text="📢 Рассылка", callback_data="broadcast_start")],
             [InlineKeyboardButton(text="📊 Экспорт заказов", callback_data="admin_export_orders")],
             [InlineKeyboardButton(text="🚪 Выйти", callback_data="admin_exit")],
         ]
@@ -250,6 +251,7 @@ async def admin_panel(message: Message, state: FSMContext):
             ],
             [InlineKeyboardButton(text="📋 Заказы", callback_data="admin_orders_menu")],
             [InlineKeyboardButton(text="📦 Управление товарами", callback_data="admin_products")],
+            [InlineKeyboardButton(text="📢 Рассылка", callback_data="broadcast_start")],
             [InlineKeyboardButton(text="📊 Экспорт заказов", callback_data="admin_export_orders")],
             [InlineKeyboardButton(text="🚪 Выйти", callback_data="admin_exit")],
         ]

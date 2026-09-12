@@ -11,6 +11,7 @@ from config import setup_bot_commands
 from db import init_db
 from handlers.admin import admin_router
 from handlers.admin_products import router as products_router
+from handlers.admin_broadcast import router as admin_broadcast_router
 from handlers.callbacks import router as callbacks_router
 from handlers.fallback import router as fallback_router
 from handlers.navigation import router as navigation_router
@@ -34,6 +35,7 @@ dp = Dispatcher()
 
 # ==================== ПОДКЛЮЧЕНИЕ РОУТЕРОВ ====================
 dp.include_router(admin_router)
+dp.include_router(admin_broadcast_router)
 dp.include_router(user_router)
 dp.include_router(navigation_router)
 dp.include_router(profile_router)

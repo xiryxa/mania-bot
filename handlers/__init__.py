@@ -6,6 +6,7 @@ from .fallback import router as fallback_router
 from .navigation import router as navigation_router
 from .profile import router as profile_router
 from .router import router as user_router
+from .admin_broadcast import router as admin_broadcast_router
 
 # ==================== ЭКСПОРТЫ ====================
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "navigation_router",
     "profile_router",
     "products_router",
+    "admin_broadcast_router",
 ]

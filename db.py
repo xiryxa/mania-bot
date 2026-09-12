@@ -170,7 +170,17 @@ async def get_user_count():
         cursor = await db.execute("SELECT COUNT(*) FROM users")
         result = await cursor.fetchone()
         return result[0] if result else 0
-
+    
+    
+async def get_all_user_ids() -> list[int]:
+    """
+    Получить список Telegram ID всех зарегистрированных пользователей.
+    Используется для массовой рассылки.
+    """
+    async with aiosqlite.connect(DATABASE) as db:
+        cursor = await db.execute("SELECT id FROM users ORDER BY id")
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]
 
 # ==================== РАБОТА С ТОВАРАМИ ====================
 async def get_products():

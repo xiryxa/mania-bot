@@ -77,3 +77,9 @@ class AddProductSteps(StatesGroup):
     category = State()
     photo = State()
     confirm = State()
+    
+    
+class BroadcastState(StatesGroup):
+    """FSM для массовой рассылки от админа"""
+    composing = State()   # ждём текст или фото рассылки
+    confirming = State()  # показан предпросмотр, ждём подтверждения
