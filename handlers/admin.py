@@ -709,24 +709,25 @@ async def process_tracking_number(message: Message, state: FSMContext):
         except Exception:
             pass
 
-        # Показываем карточку заказа (отправим новое сообщение)
-        await show_orders_list(message, state, status_filter, page)
-
-        # Отдельное уведомление об успехе (можно объединить с карточкой, но пока так)
+        # Одно сообщение: подтверждение + кнопка возврата к заказу
         if notification_sent:
-            await message.answer(
-                f"✅ <b>Трек-номер для заказа #{order_id} добавлен!</b>\n"
-                f"📦 {escape_html(tracking_number)}\n\n"
-                f"✅ Клиент уведомлён",
-                parse_mode=ParseMode.HTML,
-            )
+            status_line = "✅ Клиент уведомлён"
         else:
-            await message.answer(
-                f"✅ <b>Трек-номер для заказа #{order_id} добавлен!</b>\n"
-                f"📦 {escape_html(tracking_number)}\n\n"
-                f"⚠️ Клиент не уведомлён (заблокировал бота?)",
-                parse_mode=ParseMode.HTML,
-            )
+            status_line = "⚠️ Клиент не уведомлён (заблокировал бота?)"
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="📋 Вернуться к заказу", callback_data=f"back_to_order_{order_id}")]
+            ]
+        )
+
+        await message.answer(
+            f"✅ <b>Трек-номер для заказа #{order_id} добавлен!</b>\n"
+            f"📦 {escape_html(tracking_number)}\n\n"
+            f"{status_line}",
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML,
+        )
 
     except Exception as e:
         logger.error(f"Error adding tracking: {e}", exc_info=True)
@@ -1033,7 +1034,7 @@ async def show_orders_list(
 
 
 # ==================== ОБРАБОТКА ЗАКАЗОВ ====================
-@admin_router.callback_query(StateFilter(AdminState.in_panel), F.data == "admin_orders_menu")
+@admin_router.callback_query(F.data == "admin_orders_menu", IsAdmin())
 async def admin_orders_menu(callback: CallbackQuery, state: FSMContext):
     """Меню выбора фильтра заказов"""
     data = await state.get_data()
@@ -1080,7 +1081,7 @@ async def admin_orders_menu(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@admin_router.callback_query(StateFilter(AdminState.in_panel), F.data.startswith("orders_filter_"))
+@admin_router.callback_query(F.data.startswith("orders_filter_"), IsAdmin())
 async def orders_filter_callback(callback: CallbackQuery, state: FSMContext):
     """Выбор фильтра заказов"""
     filter_type = callback.data.split("_")[2]
@@ -1095,7 +1096,7 @@ async def orders_filter_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@admin_router.callback_query(StateFilter(AdminState.in_panel), F.data.startswith("orders_page_"))
+@admin_router.callback_query(F.data.startswith("orders_page_"), IsAdmin())
 async def orders_page_callback(callback: CallbackQuery, state: FSMContext):
     """Переключение страницы заказов"""
     page = int(callback.data.split("_")[2])

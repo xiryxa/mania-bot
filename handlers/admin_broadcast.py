@@ -105,24 +105,27 @@ async def broadcast_start(callback: CallbackQuery, state: FSMContext):
         ]
     )
 
+    text = (
+        "📢 <b>Рассылка</b>\n\n"
+        "Отправьте текст рассылки (или фото с подписью), который получат все "
+        "зарегистрированные пользователи.\n\n"
+        "После получения я покажу предпросмотр и попрошу подтверждение."
+    )
+
     try:
-        await callback.message.edit_text(
-            "📢 <b>Рассылка</b>\n\n"
-            "Отправьте текст рассылки (или фото с подписью), который получат все "
-            "зарегистрированные пользователи.\n\n"
-            "После получения я покажу предпросмотр и попрошу подтверждение.",
+        sent = await callback.message.edit_text(
+            text,
             reply_markup=keyboard,
             parse_mode=ParseMode.HTML,
         )
+        await state.update_data(broadcast_start_message_id=sent.message_id)
     except Exception:
-        await callback.message.answer(
-            "📢 <b>Рассылка</b>\n\n"
-            "Отправьте текст рассылки (или фото с подписью), который получат все "
-            "зарегистрированные пользователи.\n\n"
-            "После получения я покажу предпросмотр и попрошу подтверждение.",
+        sent = await callback.message.answer(
+            text,
             reply_markup=keyboard,
             parse_mode=ParseMode.HTML,
         )
+        await state.update_data(broadcast_start_message_id=sent.message_id)
     await callback.answer()
 
 
@@ -145,7 +148,6 @@ async def broadcast_get_photo(message: Message, state: FSMContext):
         ]
     )
 
-    # Показываем предпросмотр — то же самое фото, что получат юзеры
     preview_caption = (
         "📢 <b>Предпросмотр рассылки</b>\n\n"
         "👇 Так это увидят пользователи:\n\n"
@@ -153,6 +155,17 @@ async def broadcast_get_photo(message: Message, state: FSMContext):
         f"👥 Получателей: <b>{count}</b>"
     )
 
+    # Удаляем сообщение-промпт «📢 Рассылка. Отправьте текст…»
+    data = await state.get_data()
+    start_msg_id = data.get("broadcast_start_message_id")
+    if start_msg_id:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=start_msg_id)
+        except Exception:
+            pass
+        await state.update_data(broadcast_start_message_id=None)
+
+    # Показываем предпросмотр
     await message.answer_photo(
         photo=photo_file_id,
         caption=preview_caption,
@@ -160,6 +173,7 @@ async def broadcast_get_photo(message: Message, state: FSMContext):
         parse_mode=ParseMode.HTML,
     )
 
+    # Удаляем сообщение админа с фото
     try:
         await message.delete()
     except Exception:
@@ -195,11 +209,23 @@ async def broadcast_get_text(message: Message, state: FSMContext):
         f"👥 Получателей: <b>{count}</b>"
     )
 
+    # Удаляем сообщение-промпт «📢 Рассылка. Отправьте текст…»
+    data = await state.get_data()
+    start_msg_id = data.get("broadcast_start_message_id")
+    if start_msg_id:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=start_msg_id)
+        except Exception:
+            pass
+        await state.update_data(broadcast_start_message_id=None)
+
+    # Показываем предпросмотр
     try:
         await message.answer(preview, reply_markup=keyboard, parse_mode=ParseMode.HTML)
     except Exception:
         await message.answer(preview, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
+    # Удаляем сообщение админа с текстом
     try:
         await message.delete()
     except Exception:
