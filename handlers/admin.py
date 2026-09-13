@@ -563,6 +563,13 @@ async def admin_change_status_menu(callback: CallbackQuery, state: FSMContext):
         f"Выберите новый статус:"
     )
 
+    # Удаляем старое сообщение с карточкой заказа и отправляем меню статусов,
+    # чтобы избежать двух сообщений с заказом на экране.
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logger.warning(f"admin_change_status_menu delete failed: {e}")
+
     await callback.message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
     await callback.answer()
 
