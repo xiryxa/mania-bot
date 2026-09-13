@@ -6,11 +6,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
     Message,
-    ReplyKeyboardMarkup,
 )
-
 from email_validator import EmailNotValidError, validate_email
 from utils.validators import validate_fullname, validate_phone, validate_city
 from db import add_user, escape_html, get_user_by_telegram_id, update_user
@@ -20,36 +17,6 @@ from handlers.profile import show_profile, start_register_message
 
 # ==================== РОУТЕР ====================
 router = Router()
-
-
-# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
-async def get_main_reply_keyboard(user_id: int) -> ReplyKeyboardMarkup:
-    """Динамическая клавиатура в зависимости от регистрации"""
-    user = await get_user_by_telegram_id(user_id)
-    is_registered = user is not None
-
-    if is_registered:
-        keyboard = ReplyKeyboardMarkup(
-            keyboard=[
-                [KeyboardButton(text="/start")],
-                [KeyboardButton(text="/command"), KeyboardButton(text="/about")],
-                [KeyboardButton(text="/profile"), KeyboardButton(text="/cancel")],
-                [KeyboardButton(text="/shop")],
-            ],
-            resize_keyboard=True,
-        )
-    else:
-        keyboard = ReplyKeyboardMarkup(
-            keyboard=[
-                [KeyboardButton(text="/start")],
-                [KeyboardButton(text="/command"), KeyboardButton(text="/about")],
-                [KeyboardButton(text="/register"), KeyboardButton(text="/cancel")],
-                [KeyboardButton(text="/shop")],
-            ],
-            resize_keyboard=True,
-        )
-
-    return keyboard
 
 
 # ==================== КОМАНДЫ ====================
@@ -92,8 +59,6 @@ async def command(message: Message):
     user = await get_user_by_telegram_id(user_id)
     is_registered = user is not None
 
-    keyboard = await get_main_reply_keyboard(user_id)
-
     if is_registered:
         text = (
             "📋 <b>Команды:</b>\n\n"
@@ -102,6 +67,7 @@ async def command(message: Message):
             "/profile - 👤 Мой профиль\n"
             "/shop - 🛒 Товары\n"
             "/about - 🦆 О нас\n"
+            "/support - 🛠️ Поддержка\n"
             "/cancel - ❌ Отменить действие"
         )
     else:
@@ -112,8 +78,28 @@ async def command(message: Message):
             "/register - 📝 Регистрация\n"
             "/shop - 🛒 Товары\n"
             "/about - 🦆 О нас\n"
+            "/support - 🛠️ Поддержка\n"
             "/cancel - ❌ Отменить действие"
         )
+
+    await message.answer(text, parse_mode=ParseMode.HTML)
+    
+@router.message(Command("support"))
+async def support(message: Message):
+    """Команда поддержки — связаться с разработчиком."""
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💬 Написать в поддержку", url="https://t.me/ktozata")],
+        ]
+    )
+
+    text = (
+        "🛠️ <b>Поддержка MANIA</b>\n\n"
+        "Нашли ошибку? Есть идея, как сделать бота удобнее?\n"
+        "Или просто нужна помощь с заказом?\n\n"
+        "Напишите нам — мы читаем каждое сообщение и стараемся отвечать быстро.\n\n"
+        "👇 Нажмите кнопку ниже, чтобы открыть чат с поддержкой:"
+    )
 
     await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 

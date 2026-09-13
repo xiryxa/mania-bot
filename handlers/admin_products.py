@@ -31,6 +31,18 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+# ==================== ХЕЛПЕР: безопасное редактирование сообщения ====================
+async def safe_edit(callback: CallbackQuery, text: str, keyboard=None, parse_mode: str = ParseMode.HTML):
+    """
+    Пытается отредактировать сообщение callback'а. Если не удалось (например,
+    сообщение — фото), отправляет новое сообщение.
+    """
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=parse_mode)
+    except Exception:
+        await callback.message.answer(text, reply_markup=keyboard, parse_mode=parse_mode)
+
+
 # ==================== ВХОД В УПРАВЛЕНИЕ ТОВАРАМИ ====================
 @router.callback_query(F.data == "admin_products", IsAdmin())
 async def admin_products_menu(callback: CallbackQuery, state: FSMContext):
@@ -60,21 +72,12 @@ async def admin_products_menu(callback: CallbackQuery, state: FSMContext):
         ]
     )
 
-    try:
-        await callback.message.edit_text(
-            "📦 <b>Управление товарами</b>\n\n"
-            "Выберите действие:",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
-    except Exception as e:
-        logger.warning(f"admin_products_menu edit failed: {e}, sending new")
-        await callback.message.answer(
-            "📦 <b>Управление товарами</b>\n\n"
-            "Выберите действие:",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
+    await safe_edit(
+        callback,
+        "📦 <b>Управление товарами</b>\n\n"
+        "Выберите действие:",
+        keyboard,
+    )
     await callback.answer()
 
 
@@ -105,11 +108,7 @@ async def product_list(callback: CallbackQuery, state: FSMContext):
                 [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_products")]
             ]
         )
-        await callback.message.edit_text(
-            "📭 Товаров пока нет.",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
+        await safe_edit(callback, "📭 Товаров пока нет.", keyboard)
         await callback.answer()
         return
 
@@ -205,6 +204,15 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
             if "message is not modified" in error_text:
                 return
             logger.warning(f"Error editing/sending admin product photo: {e}, fallback to new message")
+            # Если было старое сообщение (фото ИЛИ текст, оставшийся от текстового списка) — удаляем его
+            if last_photo_message_id:
+                try:
+                    await message.bot.delete_message(
+                        chat_id=message.chat.id,
+                        message_id=last_photo_message_id,
+                    )
+                except Exception:
+                    pass
             photo_msg = await message.answer_photo(
                 photo=product[7],
                 caption=text,
@@ -212,10 +220,6 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
                 parse_mode=ParseMode.HTML,
             )
             await state.update_data(admin_last_photo_message_id=photo_msg.message_id)
-            try:
-                await message.delete()
-            except Exception:
-                pass
             return
 
     # Если фото нет — текстовый вариант
@@ -254,9 +258,29 @@ async def product_list_text(callback: CallbackQuery, state: FSMContext):
     """Показать текстовый список всех товаров (без фото)"""
     data = await state.get_data()
     products = data.get("admin_products", [])
+    last_photo_message_id = data.get("admin_last_photo_message_id")
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🖼️ Вернуться к просмотру с фото", callback_data="product_list")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_products")],
+        ]
+    )
 
     if not products:
-        await callback.message.edit_text("📭 Товаров нет.")
+        try:
+            await callback.message.edit_text("📭 Товаров нет.", reply_markup=keyboard)
+        except Exception:
+            if last_photo_message_id:
+                try:
+                    await callback.bot.delete_message(
+                        chat_id=callback.message.chat.id,
+                        message_id=last_photo_message_id,
+                    )
+                except Exception:
+                    pass
+            new_msg = await callback.message.answer("📭 Товаров нет.", reply_markup=keyboard)
+            await state.update_data(admin_last_photo_message_id=new_msg.message_id)
         await callback.answer()
         return
 
@@ -274,17 +298,24 @@ async def product_list_text(callback: CallbackQuery, state: FSMContext):
             f"   ─────────────\n"
         )
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🖼️ Вернуться к просмотру с фото", callback_data="product_list")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_products")],
-        ]
-    )
-
     try:
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        # Если редактирование прошло — обновляем state: текущее сообщение теперь это
+        await state.update_data(admin_last_photo_message_id=callback.message.message_id)
     except Exception:
-        await callback.message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        # Если было фото-сообщение — удаляем его
+        if last_photo_message_id:
+            try:
+                await callback.bot.delete_message(
+                    chat_id=callback.message.chat.id,
+                    message_id=last_photo_message_id,
+                )
+            except Exception:
+                pass
+        # Отправляем новое текстовое сообщение
+        new_msg = await callback.message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        await state.update_data(admin_last_photo_message_id=new_msg.message_id)
+
     await callback.answer()
 
 
@@ -301,21 +332,12 @@ async def product_add_start(callback: CallbackQuery, state: FSMContext):
         ]
     )
 
-    try:
-        await callback.message.edit_text(
-            "📝 <b>Добавление товара</b>\n\n"
-            "Введите <b>название</b> товара (манка):",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
-    except Exception as e:
-        logger.warning(f"product_add_start edit failed: {e}, sending new")
-        await callback.message.answer(
-            "📝 <b>Добавление товара</b>\n\n"
-            "Введите <b>название</b> товара (манка):",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
+    await safe_edit(
+        callback,
+        "📝 <b>Добавление товара</b>\n\n"
+        "Введите <b>название</b> товара (манка):",
+        keyboard,
+    )
     await callback.answer()
 
 
@@ -428,11 +450,11 @@ async def product_add_category_callback(callback: CallbackQuery, state: FSMConte
         ]
     )
 
-    await callback.message.edit_text(
+    await safe_edit(
+        callback,
         f"📦 Введите <b>количество</b> товара в наличии (цифрой):\n\n"
         f"🏷️ Категория: {category}",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML,
+        keyboard,
     )
     await callback.answer()
 
@@ -529,7 +551,10 @@ async def save_product(message: Message, state: FSMContext, callback: CallbackQu
         )
 
         if callback:
-            await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+            try:
+                await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+            except Exception:
+                await callback.message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
         else:
             await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
@@ -540,7 +565,10 @@ async def save_product(message: Message, state: FSMContext, callback: CallbackQu
         logger.error(f"Error adding product: {e}", exc_info=True)
         error_text = "❌ Ошибка при добавлении товара. Попробуйте позже."
         if callback:
-            await callback.message.edit_text(error_text, parse_mode=ParseMode.HTML)
+            try:
+                await callback.message.edit_text(error_text, parse_mode=ParseMode.HTML)
+            except Exception:
+                await callback.message.answer(error_text, parse_mode=ParseMode.HTML)
         else:
             await message.answer(error_text, parse_mode=ParseMode.HTML)
 
@@ -557,11 +585,7 @@ async def product_edit_start(callback: CallbackQuery, state: FSMContext):
                 [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_products")]
             ]
         )
-        await callback.message.edit_text(
-            "📭 Нет товаров для редактирования.",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
+        await safe_edit(callback, "📭 Нет товаров для редактирования.", keyboard)
         await callback.answer()
         return
 
@@ -579,11 +603,11 @@ async def product_edit_start(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_products")]
     )
 
-    await callback.message.edit_text(
+    await safe_edit(
+        callback,
         "✏️ <b>Редактирование товара</b>\n\n"
         "Выберите товар для редактирования:",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML,
+        keyboard,
     )
     await callback.answer()
 
@@ -595,7 +619,7 @@ async def product_edit_select(callback: CallbackQuery, state: FSMContext):
     product = await get_product_by_id(product_id)
 
     if not product:
-        await callback.message.edit_text("❌ Товар не найден.")
+        await safe_edit(callback, "❌ Товар не найден.")
         await callback.answer()
         return
 
@@ -666,12 +690,12 @@ async def edit_field_photo(callback: CallbackQuery, state: FSMContext):
         ]
     )
 
-    await callback.message.edit_text(
+    await safe_edit(
+        callback,
         "📷 <b>Редактирование фото</b>\n\n"
         "Отправьте новое фото для товара.\n"
         "Или нажмите «Пропустить», чтобы оставить текущее фото.",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML,
+        keyboard,
     )
 
 
@@ -690,7 +714,7 @@ async def edit_photo_skip(callback: CallbackQuery, state: FSMContext):
         )
         await show_admin_product(callback.message, state, 0)
     else:
-        await callback.message.edit_text("✅ Редактирование фото отменено.")
+        await safe_edit(callback, "✅ Редактирование фото отменено.")
         await admin_products_menu(callback, state)
 
 
@@ -732,11 +756,10 @@ async def edit_photo_cancel(callback: CallbackQuery, state: FSMContext):
                 ]
             )
 
-            await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+            await safe_edit(callback, text, keyboard)
             return
 
     await admin_products_menu(callback, state)
-
 
 
 @router.message(StateFilter(AdminProductEditState.photo), F.photo)
@@ -800,10 +823,10 @@ async def product_edit_field(callback: CallbackQuery, state: FSMContext):
         ]
     )
 
-    await callback.message.edit_text(
+    await safe_edit(
+        callback,
         f"✏️ Введите новое <b>{field_names.get(field, field)}</b>:",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML,
+        keyboard,
     )
     await callback.answer()
 
@@ -919,11 +942,7 @@ async def product_delete_start(callback: CallbackQuery, state: FSMContext):
                 [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_products")]
             ]
         )
-        await callback.message.edit_text(
-            "📭 Нет товаров для удаления.",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
+        await safe_edit(callback, "📭 Нет товаров для удаления.", keyboard)
         await callback.answer()
         return
 
@@ -941,11 +960,11 @@ async def product_delete_start(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_products")]
     )
 
-    await callback.message.edit_text(
+    await safe_edit(
+        callback,
         "🗑️ <b>Удаление товара</b>\n\n"
         "Выберите товар для удаления:",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML,
+        keyboard,
     )
     await callback.answer()
 
@@ -957,7 +976,7 @@ async def product_delete_confirm(callback: CallbackQuery, state: FSMContext):
     product = await get_product_by_id(product_id)
 
     if not product:
-        await callback.message.edit_text("❌ Товар не найден.")
+        await safe_edit(callback, "❌ Товар не найден.")
         await callback.answer()
         return
 
@@ -977,15 +996,7 @@ async def product_delete_confirm(callback: CallbackQuery, state: FSMContext):
         f"Вы уверены, что хотите удалить этот товар?"
     )
 
-    try:
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    except Exception:
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
-        await callback.message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-
+    await safe_edit(callback, text, keyboard)
     await callback.answer()
 
 
@@ -1002,18 +1013,14 @@ async def product_delete_yes(callback: CallbackQuery, state: FSMContext):
                 [InlineKeyboardButton(text="⬅️ Назад к списку", callback_data="product_delete")]
             ]
         )
-        await callback.message.edit_text(
-            f"❌ {result['message']}",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
+        await safe_edit(callback, f"❌ {result['message']}", keyboard)
         await callback.answer()
         return
 
-    await callback.message.edit_text(
+    await safe_edit(
+        callback,
         f"✅ <b>Товар удалён!</b>\n\n"
         f"Товар с ID <code>{product_id}</code> успешно удалён.",
-        parse_mode=ParseMode.HTML,
     )
 
     await state.clear()
@@ -1046,11 +1053,7 @@ async def deleted_products_list(callback: CallbackQuery, state: FSMContext):
                 [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_products")]
             ]
         )
-        await callback.message.edit_text(
-            "📭 Нет удалённых товаров.",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
+        await safe_edit(callback, "📭 Нет удалённых товаров.", keyboard)
         await callback.answer()
         return
 
@@ -1154,7 +1157,6 @@ async def show_deleted_product(message: Message, state: FSMContext, page: int):
 
     # Если фото нет — текстовый вариант
     if last_photo_message_id:
-        # Удаляем старое фото-сообщение и сразу отправляем новое текстовое
         try:
             await message.bot.delete_message(chat_id=message.chat.id, message_id=last_photo_message_id)
         except Exception:
@@ -1167,6 +1169,7 @@ async def show_deleted_product(message: Message, state: FSMContext, page: int):
         await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
     except Exception:
         await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
 
 @router.callback_query(F.data.startswith("deleted_page_"), IsAdmin())
 async def deleted_page_callback(callback: CallbackQuery, state: FSMContext):
@@ -1189,7 +1192,7 @@ async def restore_confirm(callback: CallbackQuery, state: FSMContext):
     product = await get_product_by_id(product_id)
 
     if not product:
-        await callback.message.edit_text("❌ Товар не найден.")
+        await safe_edit(callback, "❌ Товар не найден.")
         await callback.answer()
         return
 
@@ -1209,15 +1212,7 @@ async def restore_confirm(callback: CallbackQuery, state: FSMContext):
         f"Вы уверены, что хотите восстановить этот товар в каталоге?"
     )
 
-    try:
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    except Exception:
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
-        await callback.message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-
+    await safe_edit(callback, text, keyboard)
     await callback.answer()
 
 
@@ -1229,16 +1224,13 @@ async def restore_yes(callback: CallbackQuery, state: FSMContext):
     success = await restore_product(product_id)
 
     if success:
-        await callback.message.edit_text(
+        await safe_edit(
+            callback,
             f"✅ <b>Товар восстановлен!</b>\n\n"
             f"Товар с ID <code>{product_id}</code> снова доступен в каталоге.",
-            parse_mode=ParseMode.HTML,
         )
     else:
-        await callback.message.edit_text(
-            "❌ Ошибка при восстановлении товара.",
-            parse_mode=ParseMode.HTML,
-        )
+        await safe_edit(callback, "❌ Ошибка при восстановлении товара.")
 
     await state.clear()
 

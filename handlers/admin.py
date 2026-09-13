@@ -12,9 +12,7 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
     Message,
-    ReplyKeyboardMarkup,
     InputMediaPhoto
 )
 from dotenv import load_dotenv
@@ -210,21 +208,13 @@ async def show_stats(message: Message):
 # ==================== КОМАНДА /command ДЛЯ АДМИНОВ ====================
 @admin_router.message(Command("command"), F.from_user.id.in_(ADMIN_IDS))
 async def admin_command_list(message: Message):
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="/start")],
-            [KeyboardButton(text="/command"), KeyboardButton(text="/about")],
-            [KeyboardButton(text="/register"), KeyboardButton(text="/cancel")],
-            [KeyboardButton(text="/admin")],
-        ],
-        resize_keyboard=True,
-    )
     text = (
         "📋 <b>Команды бота</b>\n"
         "═══════════════════════\n\n"
         "🏠 <b>Главное</b>\n"
         "  /start — запустить бота\n"
         "  /command — список команд\n\n"
+        "  /support — поддержка\n\n"
         "📝 <b>Профиль</b>\n"
         "  /register — регистрация\n"
         "  /cancel — отменить действие\n\n"
@@ -236,7 +226,7 @@ async def admin_command_list(message: Message):
         "🔐 <b>Админ-раздел</b>\n"
         "  👑 /admin — панель администратора"
     )
-    await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await message.answer(text, parse_mode=ParseMode.HTML)
 
 
 # ==================== ВХОД В АДМИН-ПАНЕЛЬ ====================

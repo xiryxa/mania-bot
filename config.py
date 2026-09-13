@@ -52,12 +52,18 @@ async def setup_bot_commands(bot: Bot):
         BotCommand(command="start", description="🏠 Главное меню"),
         BotCommand(command="shop", description="🛒 Магазин"),
         BotCommand(command="profile", description="👤 Профиль"),
+        BotCommand(command="command", description="📜 Список команд"),
         BotCommand(command="about", description="🦆 О команде"),
     ]
     await bot.set_my_commands(commands=user_commands, scope=BotCommandScopeDefault())
 
-    admin_commands = user_commands + [
-        BotCommand(command="admin", description="🔐 Панель администратора")
+    # У админа — свой список. /admin первый по алфавиту
+    # (about убран, чтобы /admin был в самом верху).
+    admin_commands = [
+        BotCommand(command="admin", description="🔐 Панель администратора"),
+        BotCommand(command="start", description="🏠 Главное меню"),
+        BotCommand(command="shop", description="🛒 Магазин"),
+        BotCommand(command="profile", description="👤 Профиль"),
     ]
 
     for admin_id in ADMIN_IDS:

@@ -1,17 +1,59 @@
 # ==================== ИМПОРТЫ ====================
+import logging
 from aiogram import Router
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
+
+
+# ==================== НАСТРОЙКА ====================
+logger = logging.getLogger(__name__)
 
 
 # ==================== РОУТЕР ====================
 router = Router()
 
 
-# ==================== ОБРАБОТЧИК НЕИЗВЕСТНЫХ КОМАНД ====================
+# ==================== ОБРАБОТЧИК НЕИЗВЕСТНЫХ СООБЩЕНИЙ ====================
 @router.message()
 async def unknown_command(message: Message):
     """Обработчик сообщений, не попавших в другие роутеры"""
+    text = message.text or ""
+
+    # Если это похоже на команду (начинается с /)
+    if text.startswith("/"):
+        await message.answer(
+            "❌ Я не знаю такой команды.\n"
+            "Напишите /command для списка команд"
+        )
+        return
+
+    # Обычное текстовое сообщение
     await message.answer(
-        "❌ Я не знаю такой команды.\n"
-        "Напишите /command для списка команд"
+        "📭 <b>Этот чат — для заказов, а не для переписки.</b>\n\n"
+        "Сообщения, которые вы пишете сюда, не попадают к оператору.\n\n"
+        "💬 <b>Чтобы связаться с нами:</b>\n"
+        "• Откройте раздел /about — там наши контакты\n"
+        "• Или напишите напрямую по телефону из описания\n\n"
+        "🦆 <i>Приманивайте и будьте с Манией!</i>",
+        parse_mode="HTML",
+    )
+
+
+# ==================== ОБРАБОТЧИК «МЁРТВЫХ» КНОПОК ====================
+@router.callback_query()
+async def unhandled_callback(callback: CallbackQuery):
+    """
+    Ловит callback_query, которые не нашли свой хэндлер.
+    Удаляет сообщение с устаревшей кнопкой и показывает всплывающее уведомление.
+    """
+    if callback.message:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+
+    await callback.answer(
+        "❌ Кнопка устарела.\n"
+        "Попробуйте еще раз.\n"
+        "Если вы не можете решить проблему — напишите нам в поддержку по команде /support.",
+        show_alert=True,
     )
