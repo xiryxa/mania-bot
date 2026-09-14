@@ -255,7 +255,7 @@ async def admin_panel(message: Message, state: FSMContext):
 
 
 # ==================== ОБРАБОТКА КНОПОК ====================
-@admin_router.callback_query(StateFilter(AdminState.in_panel), F.data.startswith("admin_"))
+@admin_router.callback_query(F.data.startswith("admin_"), IsAdmin())
 async def admin_callback(callback: CallbackQuery, state: FSMContext):
     action = callback.data
     if action == "admin_list_users":
