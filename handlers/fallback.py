@@ -43,8 +43,15 @@ async def unknown_command(message: Message):
 async def unhandled_callback(callback: CallbackQuery):
     """
     Ловит callback_query, которые не нашли свой хэндлер.
-    Удаляет сообщение с устаревшей кнопкой и показывает всплывающее уведомление.
+    Логирует WARNING для наблюдаемости (опечатки в callback_data, 
+    забытые хэндлеры), удаляет сообщение с устаревшей кнопкой 
+    и показывает всплывающее уведомление.
     """
+    logger.warning(
+        f"Unhandled callback: data={callback.data!r}, "
+        f"user_id={callback.from_user.id}"
+    )
+
     if callback.message:
         try:
             await callback.message.delete()
@@ -54,6 +61,6 @@ async def unhandled_callback(callback: CallbackQuery):
     await callback.answer(
         "❌ Кнопка устарела.\n"
         "Попробуйте еще раз.\n"
-        "Если вы не можете решить проблему — напишите нам в поддержку по команде /support.",
+        "Если вы не можете решить проблему — напишите нам в поддержку по команде\n /support.",
         show_alert=True,
     )
