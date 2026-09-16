@@ -50,14 +50,13 @@ async def unhandled_callback(callback: CallbackQuery):
         f"Unhandled callback: data={callback.data!r}, "
         f"user_id={callback.from_user.id}"
     )
-
     if callback.message:
         fallback_text = (
             "❌ <b>Кнопка больше не актуальна.</b>\n\n"
             "Этот экран уже не соответствует текущему состоянию.\n"
-            "Вернитесь назад и попробуйте ещё раз."
+            "Вернитесь назад и попробуйте ещё раз.\n\n"
+            "💡 Если проблема повторяется, используйте команду /support" 
         )
-
         try:
             await callback.message.edit_caption(
                 caption=fallback_text,
@@ -73,9 +72,10 @@ async def unhandled_callback(callback: CallbackQuery):
                 )
             except Exception:
                 pass
-
-    await callback.answer(
-        "❌ Кнопка устарела.\n"
-        "Вернитесь назад и попробуйте ещё раз.",
-        show_alert=True,
-    )
+        
+        await callback.answer(
+            "❌ Кнопка устарела.\n"
+            "Вернитесь назад и попробуйте ещё раз.\n"
+            "💡 Или используйте /support для связи.",
+            show_alert=True,
+        )
