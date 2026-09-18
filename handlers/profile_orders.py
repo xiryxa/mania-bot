@@ -400,29 +400,38 @@ async def confirm_delivery_callback(callback: CallbackQuery, state: FSMContext):
     from db import get_order_by_id, notify_user_safe
     from handlers.admin import ADMIN_IDS
 
-    await state.clear()
-
+    # Читаем данные ДО очистки state (Правило 5)
     order_id = int(callback.data.split("_")[2])
     user_id = callback.from_user.id
 
     order = await get_order_by_id(order_id)
     if not order:
-        await callback.message.edit_text("❌ Заказ не найден.")
+        try:
+            await callback.message.edit_text("❌ Заказ не найден.", parse_mode=ParseMode.HTML)
+        except Exception:
+            await callback.message.answer("❌ Заказ не найден.", parse_mode=ParseMode.HTML)
         await callback.answer()
         return
 
     if order[1] != user_id:
-        await callback.answer("❌ Это не ваш заказ.")
+        await callback.answer("❌ Это не ваш заказ.", show_alert=True)
         return
 
+    # order[10] — это статус заказа
     if order[10] != "отправлен":
-        await callback.message.edit_text(
-            "❌ Вы можете подтвердить получение только для заказов со статусом 'отправлен'.",
-            parse_mode=ParseMode.HTML,
-        )
-        await callback.answer()
+        error_text = "❌ Вы можете подтвердить получение только для заказов со статусом «отправлен»."
+        try:
+            # Пытаемся изменить текст (если это текстовое сообщение)
+            await callback.message.edit_text(error_text, parse_mode=ParseMode.HTML)
+        except Exception as e:
+            # Фоллбек: если это фото или сообщение удалено, просто отправляем новое (Правило 2)
+            logger.warning(f"confirm_delivery edit failed: {e}, fallback to answer")
+            await callback.message.answer(error_text, parse_mode=ParseMode.HTML)
+        
+        await callback.answer("Статус заказа изменился. Пожалуйста, обновите список заказов.", show_alert=True)
         return
 
+    # Если всё ок, меняем статус на "доставлен"
     await update_order_status(order_id, "доставлен")
 
     try:
@@ -437,6 +446,7 @@ async def confirm_delivery_callback(callback: CallbackQuery, state: FSMContext):
         parse_mode=ParseMode.HTML,
     )
 
+    # Уведомление админу
     if ADMIN_IDS:
         admin_chat_id = ADMIN_IDS[0]
         product_name = order[6] or "не указан"
@@ -456,9 +466,12 @@ async def confirm_delivery_callback(callback: CallbackQuery, state: FSMContext):
             f"🚚 Доставка: {order[8] or 'не указан'}\n"
             f"📍 Адрес: {escape_html(order[9] or 'не указан')}\n"
         )
-        if order[14]:
+        if len(order) > 14 and order[14]:
             admin_text += f"📝 Комментарий: {escape_html(order[14])}\n"
 
         await notify_user_safe(callback.bot, chat_id=admin_chat_id, text=admin_text)
 
     await callback.answer()
+    
+    # Очищаем state только в самом конце (Правило 5)
+    await state.clear()

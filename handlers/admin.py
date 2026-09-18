@@ -26,6 +26,12 @@ from db import (
     return_stock_on_cancel,
     update_order_status,
     update_order_tracking_number,
+    clear_order_tracking_number,
+    decrease_product_stock,
+    get_product_stock,
+    get_order_by_id,
+    notify_user_safe,
+    get_status_notification_text,
 )
 from filters import IsAdmin
 from forms.users import AdminOrdersState, AdminState
@@ -295,14 +301,6 @@ async def admin_callback(callback: CallbackQuery, state: FSMContext):
 @admin_router.callback_query(F.data.startswith("ostatus_"), IsAdmin())
 async def admin_change_status_callback(callback: CallbackQuery, state: FSMContext):
     """Изменение статуса заказа"""
-    from db import (
-        get_order_by_id,
-        notify_user_safe,
-        return_stock_on_cancel,
-        get_product_stock,
-        decrease_product_stock,
-    )
-
     parts = callback.data.split("_")
     order_id = int(parts[1])
     key = parts[2]
@@ -328,6 +326,11 @@ async def admin_change_status_callback(callback: CallbackQuery, state: FSMContex
         old_status = current_status
         await update_order_status(order_id, new_status)
 
+        # ---- Очистка трек-номера при откате из "отправлен" ----
+        if old_status == "отправлен" and new_status not in ["отправлен", "доставлен"]:
+            await clear_order_tracking_number(order_id)
+            logger.info(f"🧹 Cleared tracking number for order #{order_id} due to status rollback")
+
         # ---- Возврат товара при отмене ----
         if key == "cancelled" and old_status != "отменён":
             stock_restored = await return_stock_on_cancel(order_id)
@@ -338,8 +341,8 @@ async def admin_change_status_callback(callback: CallbackQuery, state: FSMContex
 
         # ---- Симметричный возврат из "отменён" в активный статус ----
         if old_status == "отменён" and new_status != "отменён":
-            product_id = order[15] if len(order) > 15 else None  # product_id в индексе 15
-            quantity = order[7] or 0  # количество в заказе
+            product_id = order[15] if len(order) > 15 else None
+            quantity = order[7] or 0
 
             if product_id and quantity > 0:
                 current_stock = await get_product_stock(product_id)
@@ -361,15 +364,8 @@ async def admin_change_status_callback(callback: CallbackQuery, state: FSMContex
                         f"Пожалуйста, пополните склад или свяжитесь с клиентом."
                     )
                     for admin_id in ADMIN_IDS:
-                        await notify_user_safe(
-                            callback.bot,
-                            chat_id=admin_id,
-                            text=warning_text
-                        )
-                    await callback.answer(
-                        f"⚠️ Товара недостаточно: {current_stock} шт. вместо {quantity}",
-                        show_alert=True
-                    )
+                        await notify_user_safe(callback.bot, chat_id=admin_id, text=warning_text)
+                    await callback.answer(f"⚠️ Товара недостаточно: {current_stock} шт. вместо {quantity}", show_alert=True)
             else:
                 logger.warning(f"⚠️ Order #{order_id} has no product_id or quantity, cannot restore stock")
 
@@ -382,14 +378,10 @@ async def admin_change_status_callback(callback: CallbackQuery, state: FSMContex
         delivery_method = order[8] or "не указан"
         delivery_address = order[9] or "не указан"
 
-        notify_text = None
-        if new_status in STATUS_MESSAGES:
-            notify_text = STATUS_MESSAGES[new_status].format(
-                id=order_id,
-                product=escape_html(product_name),
-                delivery=escape_html(delivery_method),
-                address=escape_html(delivery_address),
-            )
+        # Получаем текст уведомления (он будет разным для движения вперёд и для отката)
+        notify_text = get_status_notification_text(
+            old_status, new_status, order_id, product_name, delivery_method, delivery_address
+        )
 
         notification_sent = False
         if notify_text and user_id:
@@ -398,6 +390,12 @@ async def admin_change_status_callback(callback: CallbackQuery, state: FSMContex
                 chat_id=user_id,
                 text=notify_text,
             )
+
+        # Логируем действие для админа
+        logger.info(
+            f"🔄 Статус заказа #{order_id} изменён с '{old_status}' на '{new_status}'. "
+            f"Уведомление клиенту: {'✅ отправлено' if notification_sent else '⚠️ не доставлено (бот заблокирован)'}"
+        )
 
         if key == "shipped":
             keyboard = InlineKeyboardMarkup(
@@ -412,7 +410,7 @@ async def admin_change_status_callback(callback: CallbackQuery, state: FSMContex
             except Exception:
                 pass
 
-            status_text = "✅ Клиент уведомлён" if notification_sent else "⚠️ Клиент не уведомлён (заблокировал бота?)"
+            status_text = "✅ Клиент уведомлён" if notification_sent else "⚠️ Клиент не уведомлён (бот заблокирован)"
 
             await callback.message.answer(
                 f"✅ <b>Статус заказа #{order_id} изменён на:</b>\n"
@@ -449,7 +447,7 @@ async def admin_change_status_callback(callback: CallbackQuery, state: FSMContex
             )
         else:
             await callback.answer(
-                f"✅ Статус изменён на {STATUSES[key]['label']}, но клиент не уведомлён",
+                f"✅ Статус изменён на {STATUSES[key]['label']} (клиент не получил уведомление)",
                 show_alert=True,
             )
 

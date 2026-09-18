@@ -836,3 +836,63 @@ async def check_and_notify_low_stock(
     return False
 
 
+# ==================== ЛОГИКА СТАТУСОВ ЗАКАЗОВ ====================
+def get_status_notification_text(
+    old_status: str | None, 
+    new_status: str, 
+    order_id: int, 
+    product_name: str, 
+    delivery_method: str, 
+    delivery_address: str
+) -> str | None:
+    """
+    Возвращает текст уведомления о смене статуса.
+    Учитывает как движение вперёд, так и откаты (с успокаивающим текстом).
+    """
+    if not old_status:
+        old_status = "новый"
+    if old_status == new_status:
+        return None
+
+    product = escape_html(product_name or "товар")
+    delivery = escape_html(delivery_method or "не указан")
+    address = escape_html(delivery_address or "не указан")
+
+    # 1. ОТКАТЫ (проверяем ПЕРВЫМИ, чтобы перебить стандартные сообщения)
+    if new_status == "в обработке" and old_status in ["отправлен", "доставлен", "отменён"]:
+        return (
+            f"🔄 Ваш заказ #{order_id} («{product}») временно возвращён в стадию обработки "
+            f"для уточнения деталей. Если у вас есть вопросы, пожалуйста, свяжитесь с нами (команда /about)."
+        )
+    
+    if new_status == "новый" and old_status in ["в обработке", "отправлен", "доставлен", "отменён"]:
+        return (
+            f"⚠️ Ваш заказ #{order_id} возвращён в статус «Новый» для перепроверки данных. "
+            f"Мы скоро свяжемся с вами или обновим статус. Вопросы: /about."
+        )
+
+    # 2. Движение ВПЕРЁД (стандартные сообщения)
+    if new_status == "в обработке":
+        return f"🔄 Ваш заказ #{order_id} принят в обработку! Мы уже готовим «{product}» к отправке."
+    if new_status == "отправлен":
+        return f"📦 Ваш заказ #{order_id} отправлен!\n🚚 Способ доставки: {delivery}\n📍 Адрес: {address}"
+    if new_status == "доставлен":
+        return f"✅ Заказ #{order_id} доставлен! Спасибо за покупку 🦆\nБудем рады видеть вас снова."
+    if new_status == "отменён":
+        return f"❌ Заказ #{order_id} отменён. Если это ошибка — напишите нам, контакты в разделе /about."
+
+    # 3. Fallback для любых других нестандартных переходов
+    return (
+        f"ℹ️ Статус вашего заказа #{order_id} обновлён: «{new_status}». "
+        f"Если у вас есть вопросы, мы всегда на связи (/about)."
+    )
+
+async def clear_order_tracking_number(order_id: int):
+    """Очищает трек-номер заказа (используется при откате статуса из 'отправлен')"""
+    async with aiosqlite.connect(DATABASE) as db:
+        await db.execute(
+            "UPDATE orders SET tracking_number = NULL WHERE id = ?",
+            (order_id,),
+        )
+        await db.commit()
+        
