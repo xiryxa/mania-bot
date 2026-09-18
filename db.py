@@ -86,6 +86,15 @@ async def init_db():
             await db.execute("ALTER TABLE orders ADD COLUMN unit_price INTEGER")
             logger.info("✅ Добавлено поле unit_price в таблицу orders")
 
+        # Миграция для снепшота данных пользователя в заказе
+        if "order_fullname" not in column_names:
+            await db.execute("ALTER TABLE orders ADD COLUMN order_fullname TEXT")
+            logger.info("✅ Добавлено поле order_fullname в таблицу orders")
+
+        if "order_phone" not in column_names:
+            await db.execute("ALTER TABLE orders ADD COLUMN order_phone TEXT")
+            logger.info("✅ Добавлено поле order_phone в таблицу orders")
+
         cursor = await db.execute("PRAGMA table_info(products)")
         columns = await cursor.fetchall()
         column_names = [col[1] for col in columns]
@@ -265,15 +274,13 @@ async def get_products_by_category(category: str) -> list:
 
 
 # ==================== РАБОТА С ЗАКАЗАМИ ====================
-
-
 async def get_orders():
     async with aiosqlite.connect(DATABASE) as db:
         cursor = await db.execute("""
             SELECT
                 orders.id,
-                users.fullname,
-                users.phone,
+                orders.order_fullname,
+                orders.order_phone,
                 users.email,
                 users.city,
                 users.address,
@@ -303,8 +310,8 @@ async def get_order_by_id(order_id: int):
             SELECT
                 orders.id,
                 orders.user_id,
-                users.fullname,
-                users.phone,
+                orders.order_fullname,
+                orders.order_phone,
                 users.email,
                 users.city,
                 products.name,
@@ -383,15 +390,17 @@ async def create_order_and_decrease_stock(
     delivery_address: str,
     comment: str = None,
 ) -> dict:
-    """
-    Создаёт заказ, обновляет адрес пользователя и списывает остаток.
-    Всё в одной транзакции.
-    
-    Списание остатка — атомарный UPDATE с условием quantity >= ?, 
-    защищено от race condition.
-    """
     async with aiosqlite.connect(DATABASE) as db:
-        # 1. Получаем цену товара (для записи в orders.unit_price)
+        # 1. Получаем текущие данные пользователя для снепшота
+        cursor = await db.execute(
+            "SELECT fullname, phone FROM users WHERE id = ?",
+            (user_id,),
+        )
+        user_data = await cursor.fetchone()
+        order_fullname = user_data[0] if user_data and user_data[0] else "Не указано"
+        order_phone = user_data[1] if user_data and user_data[1] else "Не указано"
+
+        # 2. Получаем цену товара (для записи в orders.unit_price)
         cursor = await db.execute(
             "SELECT price FROM products WHERE id = ?",
             (product_id,),
@@ -403,7 +412,7 @@ async def create_order_and_decrease_stock(
 
         unit_price = result[0]
 
-        # 2. Атомарное списание остатка с проверкой
+        # 3. Атомарное списание остатка с проверкой
         cursor = await db.execute(
             "UPDATE products SET quantity = quantity - ? "
             "WHERE id = ? AND quantity >= ?",
@@ -424,20 +433,20 @@ async def create_order_and_decrease_stock(
                 "order_id": None,
             }
 
-        # 3. Сохраняем заказ
+        # 4. Сохраняем заказ с новыми полями снепшота
         await db.execute(
             "INSERT INTO orders "
-            "(user_id, product_id, quantity, delivery_method, delivery_address, comment, unit_price) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (user_id, product_id, quantity, delivery_method, delivery_address, comment, unit_price),
+            "(user_id, product_id, quantity, delivery_method, delivery_address, comment, unit_price, order_fullname, order_phone) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, product_id, quantity, delivery_method, delivery_address, comment, unit_price, order_fullname, order_phone),
         )
 
-        # 4. Получаем ID созданного заказа
+        # 5. Получаем ID созданного заказа
         cursor = await db.execute("SELECT last_insert_rowid()")
         order_id_row = await cursor.fetchone()
         order_id = order_id_row[0] if order_id_row else None
 
-        # 5. Обновляем адрес пользователя
+        # 6. Обновляем адрес пользователя
         await db.execute(
             "UPDATE users SET address = ? WHERE id = ?",
             (delivery_address, user_id),
@@ -638,8 +647,8 @@ async def get_orders_paginated(status_filter: str = None, offset: int = 0, limit
         cursor = await db.execute(f"""
             SELECT
                 orders.id,
-                users.fullname,
-                users.phone,
+                orders.order_fullname,
+                orders.order_phone,
                 users.email,
                 users.city,
                 products.name,
