@@ -883,7 +883,7 @@ def get_status_notification_text(
 
     # 3. Fallback для любых других нестандартных переходов
     return (
-        f"ℹ️ Статус вашего заказа #{order_id} обновлён: «{new_status}». "
+        f"ℹ️ Статус вашего заказа #{order_id} обновлён: «{escape_html(str(new_status))}». "
         f"Если у вас есть вопросы, мы всегда на связи (/about)."
     )
 
@@ -895,4 +895,5 @@ async def clear_order_tracking_number(order_id: int):
             (order_id,),
         )
         await db.commit()
+        logger.info(f"🧹 DB: Tracking number cleared for order #{order_id}")
         

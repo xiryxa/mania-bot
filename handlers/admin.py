@@ -341,6 +341,8 @@ async def admin_change_status_callback(callback: CallbackQuery, state: FSMContex
 
         # ---- Симметричный возврат из "отменён" в активный статус ----
         if old_status == "отменён" and new_status != "отменён":
+            # Индексы сохранены для обратной совместимости (см. get_order_by_id в db.py)
+            # 15 = product_id, 7 = quantity
             product_id = order[15] if len(order) > 15 else None
             quantity = order[7] or 0
 
