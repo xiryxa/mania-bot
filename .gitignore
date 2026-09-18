@@ -33,3 +33,7 @@ project_full.txt
 # Windows / macOS мусор
 Thumbs.db
 .DS_Store
+
+# Логи бота
+logs/
+*.log

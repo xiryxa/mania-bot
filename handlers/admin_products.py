@@ -151,10 +151,10 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
 
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"admin_product_page_{page - 1}"))
-    nav_buttons.append(InlineKeyboardButton(text=f"{page + 1}/{total}", callback_data="admin_page_info"))
+        nav_buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"product_page_admin_{page - 1}"))
+    nav_buttons.append(InlineKeyboardButton(text=f"{page + 1}/{total}", callback_data="page_info_admin_"))
     if page < total - 1:
-        nav_buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"admin_product_page_{page + 1}"))
+        nav_buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"product_page_admin_{page + 1}"))
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -239,7 +239,7 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
         await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 
-@router.callback_query(F.data.startswith("admin_product_page_"), IsAdmin())
+@router.callback_query(F.data.startswith("product_page_admin_"), IsAdmin())
 async def admin_product_page(callback: CallbackQuery, state: FSMContext):
     """Переключение страницы в админ-списке товаров"""
     page = int(callback.data.split("_")[3])
@@ -247,8 +247,8 @@ async def admin_product_page(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data == "admin_page_info", IsAdmin())
-async def admin_page_info(callback: CallbackQuery):
+@router.callback_query(F.data == "page_info_admin_", IsAdmin())
+async def page_info_admin(callback: CallbackQuery):
     """Информация о странице"""
     await callback.answer("Страница товара", show_alert=True)
 

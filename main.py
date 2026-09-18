@@ -19,14 +19,12 @@ from handlers.profile import router as profile_router
 from handlers.profile_orders import router as profile_orders_router
 from handlers.router import router as user_router
 from handlers.shop import router as shop_router
+from utils.logger import setup_logger
 
-# ==================== НАСТРОЙКА ЛОГИРОВАНИЯ ====================
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# ==================== ИНИЦИАЛИЗАЦИЯ ЛОГГЕРА ====================
+setup_logger()
 logger = logging.getLogger(__name__)
-
+   
 # ==================== ЗАГРУЗКА ПЕРЕМЕННЫХ ====================
 
 load_dotenv()
