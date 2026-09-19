@@ -326,11 +326,6 @@ async def admin_change_status_callback(callback: CallbackQuery, state: FSMContex
         old_status = current_status
         await update_order_status(order_id, new_status)
 
-        # ---- Очистка трек-номера при откате из "отправлен" ----
-        if old_status == "отправлен" and new_status not in ["отправлен", "доставлен"]:
-            await clear_order_tracking_number(order_id)
-            logger.info(f"🧹 Cleared tracking number for order #{order_id} due to status rollback")
-
         # ---- Возврат товара при отмене ----
         if key == "cancelled" and old_status != "отменён":
             stock_restored = await return_stock_on_cancel(order_id)
@@ -846,7 +841,6 @@ async def show_orders_list(
 
     limit = 1
     offset = page * limit
-
     orders = await get_orders_paginated(status_filter, offset, limit)
     total = await get_orders_count(status_filter)
     total_pages = (total + limit - 1) // limit if total > 0 else 1
@@ -876,7 +870,6 @@ async def show_orders_list(
         return
 
     order = orders[0]
-
     product_id = order[12]
     product_image = None
     if product_id:
@@ -889,7 +882,6 @@ async def show_orders_list(
     total_price = quantity * unit_price
 
     status = order[9] or "новый"
-
     status_emoji = {
         "новый": "🆕",
         "в обработке": "🔄",
@@ -928,29 +920,47 @@ async def show_orders_list(
         text += f"📦 <b>Трек-номер:</b> {escape_html(order[11])}\n"
     if order[14]:
         text += f"📝 <b>Комментарий:</b> {escape_html(order[14])}\n"
-    text += f"📌 <b>Статус:</b> {status}\n"
-    text += f"📅 <b>Создан:</b> {format_moscow_time(order[10])}\n"
-    text += f"━━━━━━━━━━━━━━━━━━━━━\n"
 
-    keyboard_rows = [
-        [InlineKeyboardButton(text="🔄 Изменить статус", callback_data=f"change_status_{order[0]}")],
-        [
-            InlineKeyboardButton(text="🔵 Активные", callback_data="orders_filter_active"),
-            InlineKeyboardButton(text="🟢 Все", callback_data="orders_filter_all"),
-            InlineKeyboardButton(text="✅ Заверш.", callback_data="orders_filter_completed"),
-        ],
-        [
-            InlineKeyboardButton(text="◀️ Назад", callback_data=f"orders_page_{page - 1}") if page > 0 else None,
-            InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"orders_page_{page + 1}") if page < total_pages - 1 else None,
-        ],
-        [InlineKeyboardButton(text="📊 Экспорт заказов", callback_data="admin_export_orders")],
-        [InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="admin_orders_menu")],
-    ]
+    text += (
+        f"📌 <b>Статус:</b> {status}\n"
+        f"📅 <b>Создан:</b> {format_moscow_time(order[10])}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+    )
 
-    keyboard_rows[2] = [btn for btn in keyboard_rows[2] if btn is not None]
+    # ==================== ФОРМИРОВАНИЕ КЛАВИАТУРЫ ====================
+    keyboard_rows = []
+    
+    # 1. Кнопка изменения статуса
+    keyboard_rows.append([InlineKeyboardButton(text="🔄 Изменить статус", callback_data=f"change_status_{order[0]}")])
+    
+    # 2. Кнопка очистки трек-номера (только если он есть)
+    if order[11]:  # order[11] — это трек-номер
+        keyboard_rows.append([InlineKeyboardButton(text="🗑 Очистить трек", callback_data=f"clear_tracking_{order[0]}")])
+    
+    # 3. Фильтры
+    keyboard_rows.append([
+        InlineKeyboardButton(text="🔵 Активные", callback_data="orders_filter_active"),
+        InlineKeyboardButton(text="🟢 Все", callback_data="orders_filter_all"),
+        InlineKeyboardButton(text="✅ Заверш.", callback_data="orders_filter_completed"),
+    ])
+    
+    # 4. Пагинация
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"orders_page_{page-1}"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"orders_page_{page+1}"))
+    if nav_row:
+        keyboard_rows.append(nav_row)
+        
+    # 5. Экспорт и Назад
+    keyboard_rows.append([InlineKeyboardButton(text="📊 Экспорт заказов", callback_data="admin_export_orders")])
+    keyboard_rows.append([InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="admin_orders_menu")])
+    
+    # Убираем пустые строки (на случай, если пагинация не нужна)
     keyboard_rows = [row for row in keyboard_rows if row]
-
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
+    # =================================================================
 
     data = await state.get_data()
     last_orders_photo_message_id = data.get("last_orders_photo_message_id")
@@ -959,7 +969,6 @@ async def show_orders_list(
     if product_image:
         try:
             if last_orders_photo_message_id:
-                # Редактируем существующее фото-сообщение
                 await message.bot.edit_message_media(
                     chat_id=message.chat.id,
                     message_id=last_orders_photo_message_id,
@@ -972,7 +981,6 @@ async def show_orders_list(
                 )
                 return
             else:
-                # Первое фото — отправляем новое сообщение
                 photo_msg = await message.answer_photo(
                     photo=product_image,
                     caption=text,
@@ -987,10 +995,8 @@ async def show_orders_list(
                 return
         except Exception as e:
             error_text = str(e).lower()
-            # Если ошибка "message is not modified" — просто игнорируем
             if "message is not modified" in error_text:
                 return
-            # Иначе — fallback с отправкой нового фото
             logger.warning(f"Error editing/sending order photo: {e}, fallback to new message")
             photo_msg = await message.answer_photo(
                 photo=product_image,
@@ -1007,7 +1013,6 @@ async def show_orders_list(
 
     # Если фото нет — текстовый вариант
     if last_orders_photo_message_id:
-        # Удаляем старое фото-сообщение и сразу отправляем новое текстовое
         try:
             await message.bot.delete_message(chat_id=message.chat.id, message_id=last_orders_photo_message_id)
         except Exception:
@@ -1115,3 +1120,109 @@ async def admin_back_to_order(callback: CallbackQuery, state: FSMContext):
     else:
         await callback.message.edit_text("❌ Заказ не найден.")
     await callback.answer()
+    
+    
+    
+# ==================== РУЧНАЯ ОЧИСТКА ТРЕК-НОМЕРА ====================
+@admin_router.callback_query(F.data.startswith("clear_tracking_"), IsAdmin())
+async def clear_tracking_callback(callback: CallbackQuery, state: FSMContext):
+    """Запрос подтверждения на очистку трек-номера заказа"""
+    order_id = int(callback.data.split("_")[2])
+    order = await get_order_by_id(order_id)
+    
+    # order[12] — это tracking_number в get_order_by_id
+    if not order or not order[12]:
+        await callback.answer("ℹ️ У этого заказа уже нет трек-номера.", show_alert=True)
+        return
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, очистить", callback_data=f"confirm_clear_tracking_{order_id}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=f"back_to_order_{order_id}")],
+        ]
+    )
+    
+    text = (
+        f"🗑 <b>Подтвердите очистку трек-номера</b>\n\n"
+        f"Заказ #{order_id}\n"
+        f"Текущий трек-номер: <code>{escape_html(order[12])}</code>\n\n"
+        f"Вы уверены, что хотите удалить его?"
+    )
+    
+    # Правило 2: try/except с logger.warning и фоллбеком на answer()
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as e:
+        logger.warning(f"clear_tracking_callback edit failed: {e}, deleting old and sending new")
+        # Удаляем старое фото-сообщение
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        # Отправляем новое текстовое
+        await callback.message.answer(
+            text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML,
+        )
+    await callback.answer()
+
+
+@admin_router.callback_query(F.data.startswith("confirm_clear_tracking_"), IsAdmin())
+async def confirm_clear_tracking_callback(callback: CallbackQuery, state: FSMContext):
+    """Финальное подтверждение и очистка трек-номера с уведомлением клиента"""
+    order_id = int(callback.data.split("_")[3])
+    
+    # 1. Получаем user_id для уведомления
+    order = await get_order_by_id(order_id)
+    user_id = order[1] if order else None
+
+    # 2. Очищаем трек-номер в БД
+    await clear_order_tracking_number(order_id)
+
+    # 3. Уведомляем клиента (Правило 4: notify_user_safe не уронит бота)
+    if user_id:
+        notify_text = (
+            f"⚠️ <b>Внимание: трек-номер для заказа #{order_id} аннулирован.</b>\n\n"
+            f"Пожалуйста, игнорируйте предыдущее сообщение с трек-номером.\n"
+            f"Мы отправим вам новый трек-номер, как только он будет готов.\n\n"
+            f"По всем вопросам — контакты в /about."
+        )
+        await notify_user_safe(callback.bot, chat_id=user_id, text=notify_text)
+
+    # 4. Подтверждение админу и возврат к заказу
+    await callback.answer("✅ Трек-номер успешно очищен!", show_alert=True)
+    
+    text_response = "✅ Трек-номер очищен. Клиент уведомлён об аннулировании."
+    keyboard_response = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Вернуться к заказу", callback_data=f"back_to_order_{order_id}")]
+        ]
+    )
+    
+    # Правило 2: try/except с logger.warning и фоллбеком на answer()
+    try:
+        await callback.message.edit_text(
+            text_response,
+            reply_markup=keyboard_response,
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as e:
+        logger.warning(f"confirm_clear_tracking_callback edit failed: {e}, deleting old and sending new")
+        # Удаляем старое фото-сообщение
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        # Отправляем новое текстовое
+        await callback.message.answer(
+            text_response,
+            reply_markup=keyboard_response,
+            parse_mode=ParseMode.HTML,
+        )
+        
+        

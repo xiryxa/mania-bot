@@ -132,7 +132,7 @@ def test_status_notification_forward_movement():
 
 
 def test_status_notification_rollback():
-    """Откат назад: отправлен -> в обработке. Должно прийти успокаивающее сообщение."""
+    """Откат назад: отправлен -> в обработке. Должно прийти нейтральное сообщение о факте изменения (без выдуманных причин)."""
     text = db.get_status_notification_text(
         old_status="отправлен",
         new_status="в обработке",
@@ -142,8 +142,10 @@ def test_status_notification_rollback():
         delivery_address="Адрес"
     )
     assert text is not None
-    assert "временно возвращён" in text
-    assert "уточнения деталей" in text
+    # Проверяем новый нейтральный текст, согласованный с Claude
+    assert "вернулся в стадию обработки" in text
+    assert "Продолжается подготовка" in text
+    assert "/about" in text
 
 
 def test_status_notification_no_change():
