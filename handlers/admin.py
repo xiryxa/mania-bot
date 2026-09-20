@@ -32,6 +32,7 @@ from db import (
     get_order_by_id,
     notify_user_safe,
     get_status_notification_text,
+    update_order_status_atomic
 )
 from filters import IsAdmin
 from forms.users import AdminOrdersState, AdminState
@@ -323,48 +324,19 @@ async def admin_change_status_callback(callback: CallbackQuery, state: FSMContex
         return
 
     try:
-        old_status = current_status
-        await update_order_status(order_id, new_status)
-
-        # ---- Возврат товара при отмене ----
-        if key == "cancelled" and old_status != "отменён":
-            stock_restored = await return_stock_on_cancel(order_id)
-            if stock_restored:
-                logger.info(f"✅ Stock restored for cancelled order #{order_id}")
-            else:
-                logger.warning(f"⚠️ Failed to restore stock for order #{order_id}")
-
-        # ---- Симметричный возврат из "отменён" в активный статус ----
-        if old_status == "отменён" and new_status != "отменён":
-            # Индексы сохранены для обратной совместимости (см. get_order_by_id в db.py)
-            # 15 = product_id, 7 = quantity
-            product_id = order[15] if len(order) > 15 else None
-            quantity = order[7] or 0
-
-            if product_id and quantity > 0:
-                current_stock = await get_product_stock(product_id)
-
-                if current_stock >= quantity:
-                    success = await decrease_product_stock(product_id, quantity)
-                    if success:
-                        logger.info(f"✅ Stock decreased for restored order #{order_id} (product {product_id}, qty {quantity})")
-                    else:
-                        logger.warning(f"⚠️ Failed to decrease stock for restored order #{order_id}")
-                else:
-                    warning_text = (
-                        f"⚠️ <b>Недостаточно товара на складе для возврата заказа в работу!</b>\n\n"
-                        f"Заказ #{order_id}\n"
-                        f"Товар: {escape_html(order[6] or 'не указан')}\n"
-                        f"Количество: {quantity} шт.\n"
-                        f"Доступно на складе: {current_stock} шт.\n\n"
-                        f"Статус заказа изменён, но товар на складе не зарезервирован.\n"
-                        f"Пожалуйста, пополните склад или свяжитесь с клиентом."
-                    )
-                    for admin_id in ADMIN_IDS:
-                        await notify_user_safe(callback.bot, chat_id=admin_id, text=warning_text)
-                    await callback.answer(f"⚠️ Товара недостаточно: {current_stock} шт. вместо {quantity}", show_alert=True)
-            else:
-                logger.warning(f"⚠️ Order #{order_id} has no product_id or quantity, cannot restore stock")
+        # ---- Атомарное изменение статуса и остатков в БД ----
+        result = await update_order_status_atomic(order_id, new_status)
+        
+        if not result["success"]:
+            await callback.answer(f"❌ {result['message']}", show_alert=True)
+            return
+            
+        old_status = result["old_status"]
+        
+        # Если статус не изменился (защита от двойного клика, хотя проверка выше уже есть)
+        if result["message"] == "Статус не изменился":
+            await callback.answer("ℹ️ Статус уже установлен", show_alert=True)
+            return
 
         data = await state.get_data()
         status_filter = data.get("orders_filter")

@@ -339,6 +339,71 @@ async def update_order_status(order_id: int, status: str):
             (status, order_id),
         )
         await db.commit()
+        
+        
+async def update_order_status_atomic(order_id: int, new_status: str) -> dict:
+    """
+    Атомарно изменяет статус заказа и корректирует остатки на складе.
+    Возвращает dict: {"success": bool, "message": str, "old_status": str, "new_status": str}
+    """
+    async with aiosqlite.connect(DATABASE) as db:
+        # 1. Получаем текущее состояние заказа
+        cursor = await db.execute(
+            "SELECT status, product_id, quantity FROM orders WHERE id = ?",
+            (order_id,)
+        )
+        order = await cursor.fetchone()
+        
+        if not order:
+            return {"success": False, "message": "Заказ не найден"}
+        
+        current_status, product_id, quantity = order
+        
+        # Защита от повторного выполнения (idempotency)
+        if current_status == new_status:
+            return {"success": True, "message": "Статус не изменился", "old_status": current_status, "new_status": new_status}
+        
+        # 2. Корректировка остатков
+        if new_status == "отменён" and current_status != "отменён":
+            # Возврат на склад при отмене
+            if product_id and quantity > 0:
+                await db.execute(
+                    "UPDATE products SET quantity = quantity + ? WHERE id = ?",
+                    (quantity, product_id)
+                )
+                logger.info(f"✅ Stock returned for cancelled order #{order_id} (product {product_id}, qty {quantity})")
+                
+        elif current_status == "отменён" and new_status != "отменён":
+            # Повторное списание при восстановлении из отменённых
+            if product_id and quantity > 0:
+                cursor = await db.execute(
+                    "SELECT quantity FROM products WHERE id = ?",
+                    (product_id,)
+                )
+                stock_res = await cursor.fetchone()
+                current_stock = stock_res[0] if stock_res else 0
+                
+                if current_stock < quantity:
+                    return {
+                        "success": False, 
+                        "message": f"Недостаточно товара на складе. Доступно: {current_stock} шт., требуется: {quantity} шт.",
+                        "old_status": current_status
+                    }
+                
+                await db.execute(
+                    "UPDATE products SET quantity = quantity - ? WHERE id = ?",
+                    (quantity, product_id)
+                )
+                logger.info(f"✅ Stock decreased for restored order #{order_id} (product {product_id}, qty {quantity})")
+        
+        # 3. Финальное обновление статуса
+        await db.execute(
+            "UPDATE orders SET status = ? WHERE id = ?",
+            (new_status, order_id)
+        )
+        await db.commit()
+        
+        return {"success": True, "message": "Успешно", "old_status": current_status, "new_status": new_status}
 
 
 async def update_order_comment(order_id: int, comment: str):
