@@ -64,6 +64,19 @@ async def init_db():
                 FOREIGN KEY (product_id) REFERENCES products(id)
             )
         """)
+        
+        # ---------- Таблица подписок на появление товара ----------
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS product_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                product_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (product_id) REFERENCES products(id),
+                UNIQUE(user_id, product_id)
+            )
+        """)
 
         # ---------- Миграции ----------
         cursor = await db.execute("PRAGMA table_info(products)")
@@ -233,6 +246,8 @@ async def get_product_stock(product_id: int) -> int:
         return result[0] if result else 0
 
 
+
+
 async def decrease_product_stock(product_id: int, quantity: int) -> bool:
     """
     Уменьшить количество товара на складе.
@@ -363,15 +378,23 @@ async def update_order_status_atomic(order_id: int, new_status: str) -> dict:
         if current_status == new_status:
             return {"success": True, "message": "Статус не изменился", "old_status": current_status, "new_status": new_status}
         
-        # 2. Корректировка остатков
+        restocked = False
+        
         if new_status == "отменён" and current_status != "отменён":
             # Возврат на склад при отмене
             if product_id and quantity > 0:
+                cursor = await db.execute("SELECT quantity FROM products WHERE id = ?", (product_id,))
+                stock_res = await cursor.fetchone()
+                old_quantity = stock_res[0] if stock_res else 0
+                
                 await db.execute(
                     "UPDATE products SET quantity = quantity + ? WHERE id = ?",
                     (quantity, product_id)
                 )
                 logger.info(f"✅ Stock returned for cancelled order #{order_id} (product {product_id}, qty {quantity})")
+                
+                if old_quantity == 0 and (old_quantity + quantity) > 0:
+                    restocked = True
                 
         elif current_status == "отменён" and new_status != "отменён":
             # Повторное списание при восстановлении из отменённых
@@ -403,7 +426,14 @@ async def update_order_status_atomic(order_id: int, new_status: str) -> dict:
         )
         await db.commit()
         
-        return {"success": True, "message": "Успешно", "old_status": current_status, "new_status": new_status}
+        return {
+            "success": True, 
+            "message": "Успешно", 
+            "old_status": current_status, 
+            "new_status": new_status,
+            "restocked": restocked,
+            "product_id": product_id
+        }
 
 
 async def update_order_comment(order_id: int, comment: str):
@@ -551,9 +581,8 @@ async def update_product(
     quantity: int,
     image_file_id: str = None,
     ozon_url: str = None,
-):
+) -> dict:
     async with aiosqlite.connect(DATABASE) as db:
-        # Получаем текущее количество
         cursor = await db.execute(
             "SELECT quantity FROM products WHERE id = ?",
             (product_id,),
@@ -561,7 +590,6 @@ async def update_product(
         result = await cursor.fetchone()
         old_quantity = result[0] if result else 0
 
-        # Обновляем товар
         await db.execute(
             "UPDATE products SET "
             "name = ?, description = ?, price = ?, category = ?, "
@@ -570,7 +598,6 @@ async def update_product(
             (name, description, price, category, image_file_id, ozon_url, quantity, product_id),
         )
 
-        # Если количество пополнилось выше порога — сбрасываем флаг уведомления
         if quantity > LOW_STOCK_THRESHOLD and old_quantity <= LOW_STOCK_THRESHOLD:
             await db.execute(
                 "UPDATE products SET low_stock_notified = 0 WHERE id = ?",
@@ -578,6 +605,10 @@ async def update_product(
             )
 
         await db.commit()
+        
+        # Проверяем переход 0 -> >0
+        restocked = (old_quantity == 0 and quantity > 0)
+        return {"success": True, "restocked": restocked, "product_id": product_id}
 
 
 async def delete_product(product_id: int) -> dict:
@@ -965,3 +996,53 @@ async def clear_order_tracking_number(order_id: int):
         await db.commit()
         logger.info(f"🧹 DB: Tracking number cleared for order #{order_id}")
         
+
+# ==================== ПОДПИСКИ НА ТОВАРЫ ====================
+async def subscribe_to_product(user_id: int, product_id: int) -> dict:
+    """
+    Подписать пользователя на уведомление о появлении товара.
+    Возвращает dict: {"success": bool, "message": str}
+    """
+    async with aiosqlite.connect(DATABASE) as db:
+        try:
+            await db.execute(
+                "INSERT INTO product_subscriptions (user_id, product_id) VALUES (?, ?)",
+                (user_id, product_id)
+            )
+            await db.commit()
+            return {"success": True, "message": "Подписка создана"}
+        except aiosqlite.IntegrityError:
+            return {"success": False, "message": "Вы уже подписаны на этот товар"}
+
+
+async def unsubscribe_from_product(user_id: int, product_id: int) -> bool:
+    """Отписать пользователя от товара"""
+    async with aiosqlite.connect(DATABASE) as db:
+        await db.execute(
+            "DELETE FROM product_subscriptions WHERE user_id = ? AND product_id = ?",
+            (user_id, product_id)
+        )
+        await db.commit()
+        return True
+
+
+async def get_product_subscribers(product_id: int) -> list[int]:
+    """Получить список user_id подписчиков на товар"""
+    async with aiosqlite.connect(DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT user_id FROM product_subscriptions WHERE product_id = ?",
+            (product_id,)
+        )
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]
+
+
+async def delete_subscription(user_id: int, product_id: int) -> bool:
+    """Удалить подписку (используется после успешной отправки уведомления)"""
+    async with aiosqlite.connect(DATABASE) as db:
+        await db.execute(
+            "DELETE FROM product_subscriptions WHERE user_id = ? AND product_id = ?",
+            (user_id, product_id)
+        )
+        await db.commit()
+        return True

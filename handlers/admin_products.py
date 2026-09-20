@@ -890,7 +890,8 @@ async def product_edit_value(message: Message, state: FSMContext):
                 return
             update_data["category"] = value
 
-        await update_product(
+        # Вызываем update_product и получаем результат с флагом restocked
+        result = await update_product(
             product_id=product_id,
             name=update_data["name"],
             description=update_data["description"],
@@ -901,29 +902,38 @@ async def product_edit_value(message: Message, state: FSMContext):
             image_file_id=update_data["image_file_id"],
         )
 
-        await message.answer(
-            f"✅ <b>Товар обновлён!</b>\n\n"
-            f"🔹 <b>{escape_html(update_data['name'])}</b>\n"
-            f"💰 {update_data['price']} ₽\n"
-            f"🏷️ {escape_html(update_data['category'])}\n"
-            f"📦 В наличии: {update_data['quantity']} шт.",
-            parse_mode=ParseMode.HTML,
-        )
+        if result.get("success"):
+            await message.answer(
+                f"✅ <b>Товар обновлён!</b>\n\n"
+                f"🔹 <b>{escape_html(update_data['name'])}</b>\n"
+                f"💰 {update_data['price']} ₽\n"
+                f"🏷️ {escape_html(update_data['category'])}\n"
+                f"📦 В наличии: {update_data['quantity']} шт.",
+                parse_mode=ParseMode.HTML,
+            )
 
-        await state.clear()
-        await state.set_state(AdminProductState.selecting_action)
+            # === Уведомление о появлении товара в наличии (Шаг 3) ===
+            if result.get("restocked") and result.get("product_id"):
+                from utils.notifications import notify_back_in_stock
+                await notify_back_in_stock(result["product_id"], message.bot)
+            # ========================================================
 
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="📦 Продолжить управление", callback_data="admin_products")],
-                [InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="admin_back_to_panel")],
-            ]
-        )
-        await message.answer(
-            "Выберите дальнейшее действие:",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
+            await state.clear()
+            await state.set_state(AdminProductState.selecting_action)
+
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="📦 Продолжить управление", callback_data="admin_products")],
+                    [InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="admin_back_to_panel")],
+                ]
+            )
+            await message.answer(
+                "Выберите дальнейшее действие:",
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML,
+            )
+        else:
+            await message.answer("❌ Ошибка при обновлении товара.")
 
     except Exception as e:
         logger.error(f"Error updating product: {e}", exc_info=True)

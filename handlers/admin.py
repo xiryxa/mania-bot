@@ -333,10 +333,15 @@ async def admin_change_status_callback(callback: CallbackQuery, state: FSMContex
             
         old_status = result["old_status"]
         
-        # Если статус не изменился (защита от двойного клика, хотя проверка выше уже есть)
         if result["message"] == "Статус не изменился":
             await callback.answer("ℹ️ Статус уже установлен", show_alert=True)
             return
+
+        # === Уведомление о появлении товара в наличии (Шаг 3) ===
+        if result.get("restocked") and result.get("product_id"):
+            from utils.notifications import notify_back_in_stock
+            await notify_back_in_stock(result["product_id"], callback.bot)
+        # ========================================================
 
         data = await state.get_data()
         status_filter = data.get("orders_filter")
