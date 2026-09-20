@@ -11,6 +11,7 @@ from aiogram.types import (
     Message,
     InputMediaPhoto
 )
+from handlers.admin import render_admin_banner
 from db import (
     add_product,
     delete_product,
@@ -72,12 +73,7 @@ async def admin_products_menu(callback: CallbackQuery, state: FSMContext):
         ]
     )
 
-    await safe_edit(
-        callback,
-        "📦 <b>Управление товарами</b>\n\n"
-        "Выберите действие:",
-        keyboard,
-    )
+    await render_admin_banner(callback.message, "📦 <b>Управление товарами</b>\n\nВыберите действие:", keyboard)
     await callback.answer()
 
 
@@ -125,7 +121,6 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
     """Показать один товар для админа с фото"""
     data = await state.get_data()
     products = data.get("admin_products", [])
-    last_photo_message_id = data.get("admin_last_photo_message_id")
 
     if not products or page >= len(products):
         await message.answer("❌ Товары не найдены.")
@@ -141,8 +136,8 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
         f"📦 <b>Товар {page + 1} из {total}</b>\n"
         f"━━━━━━━━━━━━━━━━━\n\n"
         f"🆔 ID: <code>{product[0]}</code>\n"
-        f"📌 Название: <b>{escape_html(product[1])}</b>\n"
-        f"📝 Описание: {escape_html(product[2][:100] + ('...' if len(product[2]) > 100 else ''))}\n"
+        f" Название: <b>{escape_html(product[1])}</b>\n"
+        f" Описание: {escape_html(product[2][:100] + ('...' if len(product[2]) > 100 else ''))}\n"
         f"💰 Цена: {product[3]} ₽\n"
         f"🏷️ Категория: {escape_html(product[4])}\n"
         f"{stock_status}\n"
@@ -160,11 +155,11 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
         inline_keyboard=[
             nav_buttons if nav_buttons else [],
             [
-                InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"edit_select_{product[0]}"),
+                InlineKeyboardButton(text="️✏️ Редактировать", callback_data=f"edit_select_{product[0]}"),
                 InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"delete_confirm_{product[0]}"),
             ],
             [
-                InlineKeyboardButton(text="📋 Текстовый список", callback_data="product_list_text"),
+                InlineKeyboardButton(text="📝 Текстовый список", callback_data="product_list_text"),
                 InlineKeyboardButton(text="➕ Добавить", callback_data="product_add"),
             ],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_products")],
@@ -174,45 +169,24 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
     # Если есть фото — используем edit_message_media
     if product[7]:
         try:
-            if last_photo_message_id:
-                await message.bot.edit_message_media(
-                    chat_id=message.chat.id,
-                    message_id=last_photo_message_id,
-                    media=InputMediaPhoto(
-                        media=product[7],
-                        caption=text,
-                        parse_mode=ParseMode.HTML,
-                    ),
-                    reply_markup=keyboard,
-                )
-                return
-            else:
-                photo_msg = await message.answer_photo(
-                    photo=product[7],
+            # Сначала пытаемся отредактировать текущее сообщение
+            await message.bot.edit_message_media(
+                chat_id=message.chat.id,
+                message_id=message.message_id,
+                media=InputMediaPhoto(
+                    media=product[7],
                     caption=text,
-                    reply_markup=keyboard,
                     parse_mode=ParseMode.HTML,
-                )
-                await state.update_data(admin_last_photo_message_id=photo_msg.message_id)
-                try:
-                    await message.delete()
-                except Exception:
-                    pass
-                return
+                ),
+                reply_markup=keyboard,
+            )
+            return
         except Exception as e:
             error_text = str(e).lower()
             if "message is not modified" in error_text:
                 return
-            logger.warning(f"Error editing/sending admin product photo: {e}, fallback to new message")
-            # Если было старое сообщение (фото ИЛИ текст, оставшийся от текстового списка) — удаляем его
-            if last_photo_message_id:
-                try:
-                    await message.bot.delete_message(
-                        chat_id=message.chat.id,
-                        message_id=last_photo_message_id,
-                    )
-                except Exception:
-                    pass
+            # Если не удалось (например, сообщение текстовое), отправляем новое фото
+            logger.warning(f"Error editing admin product photo: {e}, sending new")
             photo_msg = await message.answer_photo(
                 photo=product[7],
                 caption=text,
@@ -220,19 +194,13 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
                 parse_mode=ParseMode.HTML,
             )
             await state.update_data(admin_last_photo_message_id=photo_msg.message_id)
+            try:
+                await message.delete()
+            except Exception:
+                pass
             return
 
     # Если фото нет — текстовый вариант
-    if last_photo_message_id:
-        # Удаляем старое фото-сообщение и сразу отправляем новое текстовое
-        try:
-            await message.bot.delete_message(chat_id=message.chat.id, message_id=last_photo_message_id)
-        except Exception:
-            pass
-        await state.update_data(admin_last_photo_message_id=None)
-        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-        return
-
     try:
         await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
     except Exception:
@@ -255,67 +223,76 @@ async def page_info_admin(callback: CallbackQuery):
 
 @router.callback_query(F.data == "product_list_text", IsAdmin())
 async def product_list_text(callback: CallbackQuery, state: FSMContext):
-    """Показать текстовый список всех товаров (без фото)"""
+    """Показать текстовый список всех товаров с пагинацией"""
     data = await state.get_data()
     products = data.get("admin_products", [])
-    last_photo_message_id = data.get("admin_last_photo_message_id")
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🖼️ Вернуться к просмотру с фото", callback_data="product_list")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_products")],
-        ]
-    )
 
     if not products:
-        try:
-            await callback.message.edit_text("📭 Товаров нет.", reply_markup=keyboard)
-        except Exception:
-            if last_photo_message_id:
-                try:
-                    await callback.bot.delete_message(
-                        chat_id=callback.message.chat.id,
-                        message_id=last_photo_message_id,
-                    )
-                except Exception:
-                    pass
-            new_msg = await callback.message.answer("📭 Товаров нет.", reply_markup=keyboard)
-            await state.update_data(admin_last_photo_message_id=new_msg.message_id)
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="product_list")],
+            ]
+        )
+        await render_admin_banner(callback.message, "📭 Товаров нет.", keyboard)
         await callback.answer()
         return
 
-    text = "📦 <b>Список товаров:</b>\n"
+    # Инициализируем страницу текстового списка
+    await state.update_data(admin_text_page=0)
+    await show_admin_product_text(callback.message, state, 0)
+    await callback.answer()
+
+async def show_admin_product_text(message: Message, state: FSMContext, page: int):
+    """Показать страницу текстового списка товаров (8 товаров на страницу)"""
+    data = await state.get_data()
+    products = data.get("admin_products", [])
+    
+    if not products:
+        await message.answer("❌ Товары не найдены.")
+        return
+
+    items_per_page = 8
+    total_pages = (len(products) + items_per_page - 1) // items_per_page
+    
+    start_idx = page * items_per_page
+    end_idx = min(start_idx + items_per_page, len(products))
+    page_products = products[start_idx:end_idx]
+
+    text = f" <b>Список товаров (стр. {page + 1} из {total_pages})</b>\n"
     text += "━━━━━━━━━━━━━━━━━\n\n"
 
-    for product in products:
+    for product in page_products:
         quantity = product[5]
         text += (
-            f"🔹 <b>{escape_html(product[1])}</b>\n"
+            f" <b>{escape_html(product[1])}</b>\n"
             f"   🆔 ID: <code>{product[0]}</code>\n"
             f"   🏷️ {escape_html(product[4])} | 💰 {product[3]} ₽\n"
-            f"   📦 В наличии: {quantity} шт.\n"
+            f"    В наличии: {quantity} шт.\n"
             f"   📷 {'🖼️ есть' if product[7] else '❌ нет'}\n"
             f"   ─────────────\n"
         )
 
-    try:
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-        # Если редактирование прошло — обновляем state: текущее сообщение теперь это
-        await state.update_data(admin_last_photo_message_id=callback.message.message_id)
-    except Exception:
-        # Если было фото-сообщение — удаляем его
-        if last_photo_message_id:
-            try:
-                await callback.bot.delete_message(
-                    chat_id=callback.message.chat.id,
-                    message_id=last_photo_message_id,
-                )
-            except Exception:
-                pass
-        # Отправляем новое текстовое сообщение
-        new_msg = await callback.message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-        await state.update_data(admin_last_photo_message_id=new_msg.message_id)
+    # Кнопки пагинации
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"product_text_page_{page - 1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"product_text_page_{page + 1}"))
 
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            nav_buttons if nav_buttons else [],
+            [InlineKeyboardButton(text="🖼️ Вернуться к просмотру с фото", callback_data="product_list")],
+        ]
+    )
+
+    await render_admin_banner(message, text, keyboard)
+
+@router.callback_query(F.data.startswith("product_text_page_"), IsAdmin())
+async def product_text_page_callback(callback: CallbackQuery, state: FSMContext):
+    """Переключение страницы текстового списка"""
+    page = int(callback.data.split("_")[3])
+    await show_admin_product_text(callback.message, state, page)
     await callback.answer()
 
 
@@ -603,12 +580,7 @@ async def product_edit_start(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_products")]
     )
 
-    await safe_edit(
-        callback,
-        "✏️ <b>Редактирование товара</b>\n\n"
-        "Выберите товар для редактирования:",
-        keyboard,
-    )
+    await render_admin_banner(callback.message, "✏️ <b>Редактирование товара</b>\n\nВыберите товар для редактирования:", keyboard)
     await callback.answer()
 
 
@@ -651,28 +623,7 @@ async def product_edit_select(callback: CallbackQuery, state: FSMContext):
         ]
     )
 
-    try:
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    except Exception:
-        data = await state.get_data()
-        last_photo_message_id = data.get("admin_last_photo_message_id")
-        if last_photo_message_id:
-            try:
-                await callback.bot.delete_message(
-                    chat_id=callback.message.chat.id,
-                    message_id=last_photo_message_id,
-                )
-                await state.update_data(admin_last_photo_message_id=None)
-            except Exception:
-                pass
-
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
-
-        await callback.message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-
+    await render_admin_banner(callback.message, text, keyboard)
     await callback.answer()
 
 
@@ -970,12 +921,7 @@ async def product_delete_start(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_products")]
     )
 
-    await safe_edit(
-        callback,
-        "🗑️ <b>Удаление товара</b>\n\n"
-        "Выберите товар для удаления:",
-        keyboard,
-    )
+    await render_admin_banner(callback.message, "🗑️ <b>Удаление товара</b>\n\nВыберите товар для удаления:", keyboard)
     await callback.answer()
 
 
@@ -1006,7 +952,7 @@ async def product_delete_confirm(callback: CallbackQuery, state: FSMContext):
         f"Вы уверены, что хотите удалить этот товар?"
     )
 
-    await safe_edit(callback, text, keyboard)
+    await render_admin_banner(callback.message, text, keyboard)
     await callback.answer()
 
 
@@ -1063,7 +1009,7 @@ async def deleted_products_list(callback: CallbackQuery, state: FSMContext):
                 [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_products")]
             ]
         )
-        await safe_edit(callback, "📭 Нет удалённых товаров.", keyboard)
+        await render_admin_banner(callback.message, "📭 Нет удалённых товаров.", keyboard)
         await callback.answer()
         return
 
@@ -1080,7 +1026,6 @@ async def show_deleted_product(message: Message, state: FSMContext, page: int):
     """Показать один удалённый товар с возможностью восстановления"""
     data = await state.get_data()
     products = data.get("deleted_products", [])
-    last_photo_message_id = data.get("deleted_last_photo_message_id")
 
     if not products or page >= len(products):
         await message.answer("❌ Товары не найдены.")
@@ -1089,13 +1034,16 @@ async def show_deleted_product(message: Message, state: FSMContext, page: int):
     product = products[page]
     total = len(products)
 
+    # Добавляем логирование
+    logger.info(f"show_deleted_product: page={page}, product_id={product[0]}, has_photo={bool(product[7])}, photo_id={product[7] if product[7] else 'None'}")
+
     quantity = product[5]
     text = (
-        f"🗑 <b>Удалённый товар {page + 1} из {total}</b>\n"
+        f" <b>Удалённый товар {page + 1} из {total}</b>\n"
         f"━━━━━━━━━━━━━━━━━\n\n"
         f"🆔 ID: <code>{product[0]}</code>\n"
-        f"📌 Название: <b>{escape_html(product[1])}</b>\n"
-        f"📝 Описание: {escape_html(product[2][:100] + ('...' if len(product[2]) > 100 else ''))}\n"
+        f" Название: <b>{escape_html(product[1])}</b>\n"
+        f" Описание: {escape_html(product[2][:100] + ('...' if len(product[2]) > 100 else ''))}\n"
         f"💰 Цена: {product[3]} ₽\n"
         f"🏷️ Категория: {escape_html(product[4])}\n"
         f"📦 В наличии: {quantity} шт.\n"
@@ -1122,36 +1070,24 @@ async def show_deleted_product(message: Message, state: FSMContext, page: int):
     # Если есть фото — используем edit_message_media
     if product[7]:
         try:
-            if last_photo_message_id:
-                await message.bot.edit_message_media(
-                    chat_id=message.chat.id,
-                    message_id=last_photo_message_id,
-                    media=InputMediaPhoto(
-                        media=product[7],
-                        caption=text,
-                        parse_mode=ParseMode.HTML,
-                    ),
-                    reply_markup=keyboard,
-                )
-                return
-            else:
-                photo_msg = await message.answer_photo(
-                    photo=product[7],
+            logger.info(f"show_deleted_product: пытаемся edit_message_media для product_id={product[0]}")
+            await message.bot.edit_message_media(
+                chat_id=message.chat.id,
+                message_id=message.message_id,
+                media=InputMediaPhoto(
+                    media=product[7],
                     caption=text,
-                    reply_markup=keyboard,
                     parse_mode=ParseMode.HTML,
-                )
-                await state.update_data(deleted_last_photo_message_id=photo_msg.message_id)
-                try:
-                    await message.delete()
-                except Exception:
-                    pass
-                return
+                ),
+                reply_markup=keyboard,
+            )
+            logger.info(f"show_deleted_product: edit_message_media успешно для product_id={product[0]}")
+            return
         except Exception as e:
             error_text = str(e).lower()
             if "message is not modified" in error_text:
                 return
-            logger.warning(f"Error editing/sending deleted product photo: {e}, fallback to new message")
+            logger.warning(f"show_deleted_product: edit_message_media failed для product_id={product[0]}: {e}, sending new photo")
             photo_msg = await message.answer_photo(
                 photo=product[7],
                 caption=text,
@@ -1165,20 +1101,9 @@ async def show_deleted_product(message: Message, state: FSMContext, page: int):
                 pass
             return
 
-    # Если фото нет — текстовый вариант
-    if last_photo_message_id:
-        try:
-            await message.bot.delete_message(chat_id=message.chat.id, message_id=last_photo_message_id)
-        except Exception:
-            pass
-        await state.update_data(deleted_last_photo_message_id=None)
-        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-        return
-
-    try:
-        await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    except Exception:
-        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    # Если фото нет — используем баннер с текстом
+    logger.info(f"show_deleted_product: нет фото для product_id={product[0]}, показываем баннер с текстом")
+    await render_admin_banner(message, text, keyboard)
 
 
 @router.callback_query(F.data.startswith("deleted_page_"), IsAdmin())
@@ -1222,7 +1147,7 @@ async def restore_confirm(callback: CallbackQuery, state: FSMContext):
         f"Вы уверены, что хотите восстановить этот товар в каталоге?"
     )
 
-    await safe_edit(callback, text, keyboard)
+    await render_admin_banner(callback.message, text, keyboard)
     await callback.answer()
 
 
