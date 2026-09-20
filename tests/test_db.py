@@ -159,3 +159,74 @@ def test_status_notification_no_change():
         delivery_address="Адрес"
     )
     assert text is None
+    
+    
+@pytest.mark.asyncio
+async def test_update_order_status_atomic_cancel_and_restore(initialized_db):
+    """Тест атомарного изменения статуса: отмена и восстановление заказа"""
+    # 1. Создаем пользователя и товар (5 шт)
+    await db.add_user(1, "Иван Петров", "+79000000000", "test@test.com", "Москва")
+    await db.add_product("Манок", "Описание", 1000, "Утки", 5)
+    
+    # 2. Создаем заказ на 2 шт (остаток станет 3)
+    order_res = await db.create_order_and_decrease_stock(
+        user_id=1, product_id=1, quantity=2, 
+        delivery_method="Почта", delivery_address="Москва"
+    )
+    order_id = order_res["order_id"]
+    assert await db.get_product_stock(1) == 3
+    
+    # 3. Отменяем заказ (остаток должен стать 5)
+    result = await db.update_order_status_atomic(order_id, "отменён")
+    assert result["success"] is True
+    assert result["old_status"] == "новый"
+    assert result["new_status"] == "отменён"
+    assert await db.get_product_stock(1) == 5
+    
+    # 4. Повторная отмена (идемпотентность: остаток не должен измениться второй раз)
+    result_repeat = await db.update_order_status_atomic(order_id, "отменён")
+    assert result_repeat["success"] is True
+    assert result_repeat["message"] == "Статус не изменился"
+    assert await db.get_product_stock(1) == 5
+    
+    # 5. Восстанавливаем заказ в "в обработке" (остаток должен стать 3)
+    result_restore = await db.update_order_status_atomic(order_id, "в обработке")
+    assert result_restore["success"] is True
+    assert result_restore["old_status"] == "отменён"
+    assert result_restore["new_status"] == "в обработке"
+    assert await db.get_product_stock(1) == 3
+
+
+@pytest.mark.asyncio
+async def test_update_order_status_atomic_restore_insufficient_stock(initialized_db):
+    """Тест атомарного восстановления заказа при недостатке товара на складе"""
+    # 1. Создаем пользователя и товар (2 шт). В свежей БД этот товар получит id=1
+    await db.add_user(2, "Петр Сидоров", "+79000000001", "test2@test.com", "Москва")
+    await db.add_product("Манок 2", "Описание 2", 1500, "Гусь", 2)
+    
+    # 2. Создаем заказ на 2 шт (остаток станет 0). Используем product_id=1
+    order_res = await db.create_order_and_decrease_stock(
+        user_id=2, product_id=1, quantity=2, 
+        delivery_method="Почта", delivery_address="Москва"
+    )
+    order_id = order_res["order_id"]
+    assert await db.get_product_stock(1) == 0
+    
+    # 3. Отменяем заказ (остаток должен стать 2)
+    result_cancel = await db.update_order_status_atomic(order_id, "отменён")
+    assert result_cancel["success"] is True
+    assert await db.get_product_stock(1) == 2
+    
+    # 4. Симулируем, что весь остаток (2 шт) купили в другом заказе
+    await db.decrease_product_stock(1, 2)
+    assert await db.get_product_stock(1) == 0
+    
+    # 5. Пытаемся восстановить первый заказ (требуется 2 шт, но на складе 0)
+    result_restore = await db.update_order_status_atomic(order_id, "в обработке")
+    assert result_restore["success"] is False
+    assert "Недостаточно товара на складе" in result_restore["message"]
+    
+    # Статус заказа не должен измениться, остаток не уйдет в минус
+    order = await db.get_order_by_id(order_id)
+    assert order[10] == "отменён"
+    assert await db.get_product_stock(1) == 0
