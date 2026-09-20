@@ -38,6 +38,7 @@ class OrderState(StatesGroup):
 class AdminState(StatesGroup):
     """FSM для админ-панели"""
     in_panel = State()
+    waiting_for_photo = State()  # Для команды /getphotoid
 
 
 class AdminOrdersState(StatesGroup):

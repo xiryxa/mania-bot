@@ -74,3 +74,7 @@ async def setup_bot_commands(bot: Bot):
             )
         except Exception:
             pass
+        
+# ==================== АДМИН-ПАНЕЛЬ ====================
+# Единый баннер для навигации в админке
+ADMIN_NAV_BANNER_ID = "AgACAgIAAxkBAAIWmWqv6_27xjNhNWLg0VgrJoe85EGqAAKdImsbBHyASRmmUFYqtTGWAQADAgADeQADPQQ"

@@ -36,6 +36,7 @@ from db import (
 )
 from filters import IsAdmin
 from forms.users import AdminOrdersState, AdminState
+from config import ADMIN_NAV_BANNER_ID
 
 # ==================== НАСТРОЙКА ====================
 logger = logging.getLogger(__name__)
@@ -62,8 +63,58 @@ STATUS_MESSAGES = {
 }
 
 
+# ==================== ЕДИНЫЙ БАННЕР ДЛЯ АДМИНКИ ====================
+async def render_admin_banner(
+    message: Message,
+    text: str,
+    keyboard: InlineKeyboardMarkup,
+    banner_file_id: str = ADMIN_NAV_BANNER_ID,
+) -> None:
+    """
+    Универсальный рендер экранов админки с единым баннером.
+    Всегда использует edit_message_media, избегая конфликтов text <-> photo.
+    """
+    try:
+        await message.bot.edit_message_media(
+            chat_id=message.chat.id,
+            message_id=message.message_id,
+            media=InputMediaPhoto(
+                media=banner_file_id,
+                caption=text,
+                parse_mode=ParseMode.HTML
+            ),
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        error_text = str(e).lower()
+        
+        # 1. Игнорируем "message is not modified" — это не ошибка
+        if "message is not modified" in error_text:
+            return
+        
+        # 2. Если сообщение текстовое, edit_message_media закономерно падает.
+        # Это ожидаемое поведение при переходе из текстовых разделов (например, Товаров).
+        if "message media can't be edited" in error_text or "there is no text in the message" in error_text:
+            logger.info(f"render_admin_banner: сообщение текстовое, применяем fallback (отправляем новое фото).")
+        else:
+            # 3. Все остальные ошибки логируем как WARNING
+            logger.warning(f"render_admin_banner edit failed: {e}, sending new")
+            
+        try:
+            await message.delete()
+        except Exception:
+            pass
+            
+        await message.answer_photo(
+            photo=banner_file_id,
+            caption=text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
+
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 async def show_admin_panel(message: Message, state: FSMContext):
+    """Главное меню админ-панели"""
     await state.set_state(AdminState.in_panel)
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -79,19 +130,11 @@ async def show_admin_panel(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="🚪 Выйти", callback_data="admin_exit")],
         ]
     )
-    try:
-        await message.edit_text(
-            "🔐 <b>Админ-панель</b>\n\nВыберите действие:",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
-    except Exception as e:
-        logger.warning(f"show_admin_panel edit failed: {e}, sending new")
-        await message.answer(
-            "🔐 <b>Админ-панель</b>\n\nВыберите действие:",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
+    
+    text = "🔐<b>=========Админ-панель=========</b>\n\nВыберите действие:"
+    
+    # Используем единый баннер вместо edit_text/answer
+    await render_admin_banner(message, text, keyboard)
 
 
 async def show_users_list(message: Message):
@@ -102,19 +145,8 @@ async def show_users_list(message: Message):
                 [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back_to_panel")]
             ]
         )
-        try:
-            await message.edit_text(
-                "📭 Пока нет зарегистрированных пользователей.",
-                reply_markup=keyboard,
-                parse_mode=ParseMode.HTML,
-            )
-        except Exception as e:
-            logger.warning(f"show_users_list edit failed: {e}, sending new")
-            await message.answer(
-                "📭 Пока нет зарегистрированных пользователей.",
-                reply_markup=keyboard,
-                parse_mode=ParseMode.HTML,
-            )
+        text = "📭 Пока нет зарегистрированных пользователей."
+        await render_admin_banner(message, text, keyboard)
         return
 
     text = "👥 <b>Список пользователей:</b>\n\n"
@@ -128,8 +160,8 @@ async def show_users_list(message: Message):
 
         text += (
             f"🔹 <b>{escape_html(user[1])}</b>\n"
-            f"   📞 {escape_html(user[2]) or 'не указан'}\n"
-            f"   📧 {escape_html(user[3]) or 'не указан'}\n"
+            f"    {escape_html(user[2]) or 'не указан'}\n"
+            f"    {escape_html(user[3]) or 'не указан'}\n"
             f"   🏙️ {escape_html(user[4]) or 'не указан'}\n"
             f"   📍 {escape_html(user[5]) or 'не указан'}\n"
             f"   🆔 @{escape_html(user[6]) or 'нет'}\n"
@@ -145,11 +177,7 @@ async def show_users_list(message: Message):
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back_to_panel")]
         ]
     )
-    try:
-        await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        logger.warning(f"show_users_list edit failed: {e}, sending new")
-        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await render_admin_banner(message, text, keyboard)
 
 
 async def show_admins_list(message: Message):
@@ -159,19 +187,8 @@ async def show_admins_list(message: Message):
                 [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back_to_panel")]
             ]
         )
-        try:
-            await message.edit_text(
-                "👑 Список администраторов пуст.",
-                reply_markup=keyboard,
-                parse_mode=ParseMode.HTML,
-            )
-        except Exception as e:
-            logger.warning(f"show_admins_list edit failed: {e}, sending new")
-            await message.answer(
-                "👑 Список администраторов пуст.",
-                reply_markup=keyboard,
-                parse_mode=ParseMode.HTML,
-            )
+        text = "👑 Список администраторов пуст."
+        await render_admin_banner(message, text, keyboard)
         return
 
     text = "👑 <b>Список администраторов:</b>\n\n"
@@ -185,11 +202,7 @@ async def show_admins_list(message: Message):
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back_to_panel")]
         ]
     )
-    try:
-        await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        logger.warning(f"show_admins_list edit failed: {e}, sending new")
-        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await render_admin_banner(message, text, keyboard)
 
 
 async def show_stats(message: Message):
@@ -205,11 +218,7 @@ async def show_stats(message: Message):
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back_to_panel")]
         ]
     )
-    try:
-        await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        logger.warning(f"show_stats edit failed: {e}, sending new")
-        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await render_admin_banner(message, text, keyboard)
 
 
 # ==================== КОМАНДА /command ДЛЯ АДМИНОВ ====================
@@ -239,6 +248,7 @@ async def admin_command_list(message: Message):
 # ==================== ВХОД В АДМИН-ПАНЕЛЬ ====================
 @admin_router.message(Command("admin"), F.from_user.id.in_(ADMIN_IDS))
 async def admin_panel(message: Message, state: FSMContext):
+    """Вход в админ-панель по команде /admin"""
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
@@ -254,11 +264,12 @@ async def admin_panel(message: Message, state: FSMContext):
         ]
     )
     await state.set_state(AdminState.in_panel)
-    await message.answer(
-        "🔐 <b>Админ-панель</b>\n\nВыберите действие:",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML,
-    )
+    
+    text = "🔐 <b>Админ-панель</b>\n\nВыберите действие:"
+    
+    # При первом вызове edit_message_media упадет (так как это новое сообщение), 
+    # и сработает наш fallback на answer_photo с баннером.
+    await render_admin_banner(message, text, keyboard)
 
 
 # ==================== ОБРАБОТКА КНОПОК ====================
@@ -287,11 +298,8 @@ async def admin_callback(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
     elif action == "admin_exit":
         await state.clear()
-        try:
-            await callback.message.edit_text("🚪 Вы вышли из админ-панели.")
-        except Exception as e:
-            logger.warning(f"admin_exit edit failed: {e}")
-            await callback.message.answer("🚪 Вы вышли из админ-панели.")
+        text = "🚪 <b>Вы вышли из админ-панели.</b>\n\nИспользуйте /admin для возврата."
+        await render_admin_banner(callback.message, text, InlineKeyboardMarkup(inline_keyboard=[]))
         await callback.answer()
     elif action == "admin_back_to_panel":
         await show_admin_panel(callback.message, state)
@@ -525,14 +533,7 @@ async def admin_change_status_menu(callback: CallbackQuery, state: FSMContext):
         f"Выберите новый статус:"
     )
 
-    # Удаляем старое сообщение с карточкой заказа и отправляем меню статусов,
-    # чтобы избежать двух сообщений с заказом на экране.
-    try:
-        await callback.message.delete()
-    except Exception as e:
-        logger.warning(f"admin_change_status_menu delete failed: {e}")
-
-    await callback.message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await render_admin_banner(callback.message, text, keyboard)
     await callback.answer()
 
 
@@ -591,12 +592,7 @@ async def confirm_cancel_callback(callback: CallbackQuery, state: FSMContext):
         f"⚠️ При отмене товар вернётся на склад."
     )
 
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
-
-    await callback.message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await render_admin_banner(callback.message, text, keyboard)
     await callback.answer()
 
 
@@ -854,8 +850,8 @@ async def show_orders_list(message: Message, state: FSMContext, status_filter: s
         return
 
     filter_names = {
-        "active": "🟢 Активные заказы",
-        "completed": "✅ Завершённые заказы",
+        "active": "🔵 Активные заказы",
+        "completed": "🟢 Завершённые заказы",
         None: "📋 Все заказы",
     }
     title = filter_names.get(status_filter, "📋 Все заказы")
@@ -898,8 +894,8 @@ async def show_orders_list(message: Message, state: FSMContext, status_filter: s
     # Фильтры
     keyboard_rows.append([
         InlineKeyboardButton(text="🔵 Активные", callback_data="orders_filter_active"),
-        InlineKeyboardButton(text="🟢 Все", callback_data="orders_filter_all"),
-        InlineKeyboardButton(text="✅ Заверш.", callback_data="orders_filter_completed"),
+        InlineKeyboardButton(text="📋 Все", callback_data="orders_filter_all"),
+        InlineKeyboardButton(text="🟢 Заверш.", callback_data="orders_filter_completed"),
     ])
 
     # Пагинация
@@ -919,62 +915,30 @@ async def show_orders_list(message: Message, state: FSMContext, status_filter: s
     keyboard_rows = [row for row in keyboard_rows if row]
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
-    try:
-        await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    except Exception:
-        try:
-            await message.delete()
-        except Exception:
-            pass
-        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await render_admin_banner(message, text, keyboard)
 
 
 # ==================== ОБРАБОТКА ЗАКАЗОВ ====================
 @admin_router.callback_query(F.data == "admin_orders_menu", IsAdmin())
 async def admin_orders_menu(callback: CallbackQuery, state: FSMContext):
     """Меню выбора фильтра заказов"""
-    data = await state.get_data()
-    last_id = data.get("last_orders_photo_message_id")
-    if last_id:
-        try:
-            await callback.bot.delete_message(chat_id=callback.message.chat.id, message_id=last_id)
-        except Exception:
-            pass
-        await state.update_data(last_orders_photo_message_id=None)
-
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🟢 Активные", callback_data="orders_filter_active")],
+            [InlineKeyboardButton(text="🔵 Активные", callback_data="orders_filter_active")],
             [InlineKeyboardButton(text="📋 Все заказы", callback_data="orders_filter_all")],
-            [InlineKeyboardButton(text="✅ Завершённые", callback_data="orders_filter_completed")],
+            [InlineKeyboardButton(text="🟢 Завершённые", callback_data="orders_filter_completed")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back_to_panel")],
         ]
     )
 
-    try:
-        await callback.message.edit_text(
-            "📋 <b>Выберите категорию заказов:</b>\n\n"
-            "🟢 <b>Активные</b> — Новые и в обработке\n"
-            "📋 <b>Все</b> — Все заказы без фильтра\n"
-            "✅ <b>Завершённые</b> — Доставленные и отменённые",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
-    except Exception as e:
-        logger.warning(f"admin_orders_menu edit failed: {e}, sending new")
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
-        await callback.message.answer(
-            "📋 <b>Выберите категорию заказов:</b>\n\n"
-            "🟢 <b>Активные</b> — Новые и в обработке\n"
-            "📋 <b>Все</b> — Все заказы без фильтра\n"
-            "✅ <b>Завершённые</b> — Доставленные и отменённые",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
-    await callback.answer()
+    text = (
+        "<b>Выберите <u><i>категорию</i></u> заказов:</b>\n\n"
+        "🔵 <b>Активные</b> — Новые и в обработке\n"
+        "📋 <b>Все</b> — Все заказы без фильтра\n"
+        "🟢 <b>Завершённые</b> — Доставленные и отменённые"
+    )
+
+    await render_admin_banner(callback.message, text, keyboard)
 
 
 @admin_router.callback_query(F.data.startswith("orders_filter_"), IsAdmin())
@@ -1228,3 +1192,31 @@ async def show_order_detail(message: Message, state: FSMContext, order_id: int):
             await message.answer_photo(photo=product_image, caption=text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
         else:
             await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+            
+            
+# ==================== ВРЕМЕННАЯ КОМАНДА ДЛЯ ПОЛУЧЕНИЯ FILE_ID ====================
+@admin_router.message(Command("getphotoid"), IsAdmin())
+async def get_photo_id_command(message: Message, state: FSMContext):
+    """Временная команда для получения file_id фотографии"""
+    await state.set_state(AdminState.waiting_for_photo)
+    await message.answer(
+        "📷 <b>Отправьте фотографию</b>\n\n"
+        "Я верну вам <code>file_id</code>, который можно использовать в коде.",
+        parse_mode=ParseMode.HTML
+    )
+
+
+@admin_router.message(StateFilter(AdminState.waiting_for_photo), F.photo, IsAdmin())
+async def process_photo_for_id(message: Message, state: FSMContext):
+    """Обработка фотографии для получения file_id"""
+    file_id = message.photo[-1].file_id
+    
+    await message.answer(
+        f"✅ <b>File ID получен:</b>\n\n"
+        f"<code>{file_id}</code>\n\n"
+        f"Скопируйте его и используйте в коде.",
+        parse_mode=ParseMode.HTML
+    )
+    
+    await state.clear()
+    logger.info(f"📷 Получен file_id через /getphotoid: {file_id}")
