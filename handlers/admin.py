@@ -603,20 +603,39 @@ async def confirm_cancel_callback(callback: CallbackQuery, state: FSMContext):
 @admin_router.callback_query(F.data.startswith("back_to_order_"), IsAdmin())
 async def back_to_order_callback(callback: CallbackQuery, state: FSMContext):
     """Возврат к заказу из меню выбора статуса"""
-    order_id = int(callback.data.split("_")[3])
-    
-    data = await state.get_data()
-    status_filter = data.get("orders_filter")
-    page = data.get("orders_page", 0)
-    
-    # Устанавливаем ID текущего сообщения (меню выбора статуса) как фото-сообщение,
-    # чтобы show_orders_list отредактировала именно его
-    await state.update_data(last_orders_photo_message_id=callback.message.message_id)
-    
-    # Показываем карточку заказа (она заменит текущее сообщение)
-    await show_orders_list(callback.message, state, status_filter, page)
+    order_id = int(callback.data.split("_")[-1])
+    await show_order_detail(callback.message, state, order_id)
     await callback.answer()
 
+
+@admin_router.callback_query(F.data.startswith("view_order_detail_"), IsAdmin())
+async def view_order_detail_callback(callback: CallbackQuery, state: FSMContext):
+    """Переход к детальной карточке из списка с сохранением контекста возврата"""
+    order_id = int(callback.data.split("_")[-1])
+    data = await state.get_data()
+    await state.update_data(
+        return_to_filter=data.get("orders_filter"),
+        return_to_page=data.get("orders_page", 0)
+    )
+    await show_order_detail(callback.message, state, order_id)
+    await callback.answer()
+
+
+@admin_router.callback_query(F.data == "back_to_orders_list", IsAdmin())
+async def back_to_orders_list_callback(callback: CallbackQuery, state: FSMContext):
+    """Возврат к списку заказов из детальной карточки"""
+    data = await state.get_data()
+    status_filter = data.get("return_to_filter")
+    page = data.get("return_to_page", 0)
+    
+    # Rule 2: try edit, fallback to answer if failed
+    try:
+        await show_orders_list(callback.message, state, status_filter, page)
+    except Exception as e:
+        logger.warning(f"back_to_orders_list edit failed: {e}")
+        await callback.answer("⚠️ Не удалось вернуться к списку. Попробуйте снова.", show_alert=True)
+    
+    await callback.answer()
 
 # ==================== ОБРАБОТКА ВВОДА ТРЕК-НОМЕРА ====================
 @admin_router.message(StateFilter(AdminOrdersState.adding_tracking), F.text, IsAdmin())
@@ -807,16 +826,11 @@ async def export_orders_csv(message: Message):
 
 
 # ==================== ОТОБРАЖЕНИЕ ЗАКАЗОВ ====================
-async def show_orders_list(
-    message: Message,
-    state: FSMContext,
-    status_filter: str = None,
-    page: int = 0,
-):
-    """Показать один заказ с пагинацией и фото товара"""
-    from db import get_orders_paginated, get_orders_count, get_product_by_id
-
-    limit = 1
+async def show_orders_list(message: Message, state: FSMContext, status_filter: str = None, page: int = 0):
+    """Показать компактный список заказов с пагинацией"""
+    from db import get_orders_paginated, get_orders_count
+    
+    limit = 5
     offset = page * limit
     orders = await get_orders_paginated(status_filter, offset, limit)
     total = await get_orders_count(status_filter)
@@ -831,42 +845,13 @@ async def show_orders_list(
 
     if not orders:
         keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="admin_orders_menu")]
-            ]
+            inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="admin_orders_menu")]]
         )
         try:
-            await message.edit_text(
-                "📭 Нет заказов с выбранным фильтром.",
-                reply_markup=keyboard,
-                parse_mode=ParseMode.HTML,
-            )
-        except Exception as e:
-            logger.warning(f"show_orders_list edit failed: {e}, sending new")
-            await message.answer("📭 Нет заказов с выбранным фильтром.", reply_markup=keyboard)
+            await message.edit_text("📋 Нет заказов с выбранным фильтром.", reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        except Exception:
+            await message.answer("📋 Нет заказов с выбранным фильтром.", reply_markup=keyboard, parse_mode=ParseMode.HTML)
         return
-
-    order = orders[0]
-    product_id = order[12]
-    product_image = None
-    if product_id:
-        product = await get_product_by_id(product_id)
-        if product and len(product) > 7:
-            product_image = product[7]
-
-    unit_price = order[13] if len(order) > 13 and order[13] else 0
-    quantity = order[6] or 0
-    total_price = quantity * unit_price
-
-    status = order[9] or "новый"
-    status_emoji = {
-        "новый": "🆕",
-        "в обработке": "🔄",
-        "отправлен": "📦",
-        "доставлен": "✅",
-        "отменён": "❌",
-    }
-    emoji = status_emoji.get(status, "📌")
 
     filter_names = {
         "active": "🟢 Активные заказы",
@@ -874,54 +859,50 @@ async def show_orders_list(
         None: "📋 Все заказы",
     }
     title = filter_names.get(status_filter, "📋 Все заказы")
+    text = f"{title}\n━━━━━━━━━━━━━━━━━━━━━\n"
 
-    text = (
-        f"{title}\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"📄 Заказ {page + 1} из {total_pages}\n\n"
-        f"{emoji} <b>Заказ #{order[0]}</b>\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"👤 <b>Клиент:</b> {escape_html(order[1])}\n"
-        f"📞 <b>Телефон:</b> {escape_html(order[2])}\n"
-        f"📧 <b>Email:</b> {escape_html(order[3] or 'не указан')}\n"
-        f"🏙️ <b>Город:</b> {escape_html(order[4] or 'не указан')}\n\n"
-        f"🛒 <b>Товар:</b> {escape_html(order[5])}\n"
-        f"📦 <b>Количество:</b> {quantity} шт.\n"
-        f"💰 <b>Цена за шт.:</b> {unit_price} ₽\n"
-        f"💵 <b>Сумма:</b> {total_price} ₽\n"
-        f"🚚 <b>Доставка:</b> {order[7]}\n"
-        f"📍 <b>Адрес:</b> {escape_html(order[8])}\n"
-    )
-
-    if order[11]:
-        text += f"📦 <b>Трек-номер:</b> {escape_html(order[11])}\n"
-    if order[14]:
-        text += f"📝 <b>Комментарий:</b> {escape_html(order[14])}\n"
-
-    text += (
-        f"📌 <b>Статус:</b> {status}\n"
-        f"📅 <b>Создан:</b> {format_moscow_time(order[10])}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-    )
-
-    # ==================== ФОРМИРОВАНИЕ КЛАВИАТУРЫ ====================
     keyboard_rows = []
+    status_emoji = {"новый": "🆕", "в обработке": "🔄", "отправлен": "📦", "доставлен": "✅", "отменён": "❌"}
+
+    for order in orders:
+        # Явное присвоение переменных (формат get_orders_paginated)
+        o_id = order[0]
+        fullname = order[1] or "Неизвестно"
+        product_name = order[5] or "Товар"
+        quantity = order[6] or 0
+        unit_price = order[13] or 0
+        total_price = quantity * unit_price
+        status = order[9] or "новый"
     
-    # 1. Кнопка изменения статуса
-    keyboard_rows.append([InlineKeyboardButton(text="🔄 Изменить статус", callback_data=f"change_status_{order[0]}")])
+        emoji = status_emoji.get(status, "📌")
     
-    # 2. Кнопка очистки трек-номера (только если он есть)
-    if order[11]:  # order[11] — это трек-номер
-        keyboard_rows.append([InlineKeyboardButton(text="🗑 Очистить трек", callback_data=f"clear_tracking_{order[0]}")])
+        # Для кнопок: обрезаем до 25 символов или до конца слова
+        if len(product_name) > 25:
+            short_name = product_name[:25].rsplit(" ", 1)[0] + "..."
+        else:
+            short_name = product_name
     
-    # 3. Фильтры
+        # Для текста: используем полное название
+        full_name = product_name
+    
+        text += f"{emoji} <b>#{o_id}</b> — {escape_html(fullname)} — {escape_html(full_name)} — {total_price} ₽\n"
+    
+        # Уникальная кнопка для каждого заказа
+        button_text = f"{emoji} #{o_id} — {escape_html(short_name)}"
+        keyboard_rows.append([
+            InlineKeyboardButton(text=button_text, callback_data=f"view_order_detail_{o_id}")
+        ])
+
+    text += f"━━━━━━━━━━━━━━━━━━━━━\nСтраница {page + 1} из {total_pages}"
+
+    # Фильтры
     keyboard_rows.append([
         InlineKeyboardButton(text="🔵 Активные", callback_data="orders_filter_active"),
         InlineKeyboardButton(text="🟢 Все", callback_data="orders_filter_all"),
         InlineKeyboardButton(text="✅ Заверш.", callback_data="orders_filter_completed"),
     ])
-    
-    # 4. Пагинация
+
+    # Пагинация
     nav_row = []
     if page > 0:
         nav_row.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"orders_page_{page-1}"))
@@ -929,79 +910,22 @@ async def show_orders_list(
         nav_row.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"orders_page_{page+1}"))
     if nav_row:
         keyboard_rows.append(nav_row)
-        
-    # 5. Экспорт и Назад
+
+    # Экспорт и Назад
     keyboard_rows.append([InlineKeyboardButton(text="📊 Экспорт заказов", callback_data="admin_export_orders")])
     keyboard_rows.append([InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="admin_orders_menu")])
-    
-    # Убираем пустые строки (на случай, если пагинация не нужна)
+
+    # Убираем пустые строки
     keyboard_rows = [row for row in keyboard_rows if row]
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
-    # =================================================================
-
-    data = await state.get_data()
-    last_orders_photo_message_id = data.get("last_orders_photo_message_id")
-
-    # Если есть фото — используем edit_message_media
-    if product_image:
-        try:
-            if last_orders_photo_message_id:
-                await message.bot.edit_message_media(
-                    chat_id=message.chat.id,
-                    message_id=last_orders_photo_message_id,
-                    media=InputMediaPhoto(
-                        media=product_image,
-                        caption=text,
-                        parse_mode=ParseMode.HTML,
-                    ),
-                    reply_markup=keyboard,
-                )
-                return
-            else:
-                photo_msg = await message.answer_photo(
-                    photo=product_image,
-                    caption=text,
-                    reply_markup=keyboard,
-                    parse_mode=ParseMode.HTML,
-                )
-                await state.update_data(last_orders_photo_message_id=photo_msg.message_id)
-                try:
-                    await message.delete()
-                except Exception:
-                    pass
-                return
-        except Exception as e:
-            error_text = str(e).lower()
-            if "message is not modified" in error_text:
-                return
-            logger.warning(f"Error editing/sending order photo: {e}, fallback to new message")
-            photo_msg = await message.answer_photo(
-                photo=product_image,
-                caption=text,
-                reply_markup=keyboard,
-                parse_mode=ParseMode.HTML,
-            )
-            await state.update_data(last_orders_photo_message_id=photo_msg.message_id)
-            try:
-                await message.delete()
-            except Exception:
-                pass
-            return
-
-    # Если фото нет — текстовый вариант
-    if last_orders_photo_message_id:
-        try:
-            await message.bot.delete_message(chat_id=message.chat.id, message_id=last_orders_photo_message_id)
-        except Exception:
-            pass
-        await state.update_data(last_orders_photo_message_id=None)
-        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-        return
 
     try:
         await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        logger.warning(f"show_orders_list edit failed: {e}, sending new")
+    except Exception:
+        try:
+            await message.delete()
+        except Exception:
+            pass
         await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 
@@ -1078,24 +1002,20 @@ async def orders_page_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@admin_router.callback_query(StateFilter(AdminOrdersState.adding_tracking), F.data == "admin_back_to_order")
+@admin_router.callback_query(StateFilter(AdminOrdersState.adding_tracking), F.data == "admin_back_to_order", IsAdmin())
 async def admin_back_to_order(callback: CallbackQuery, state: FSMContext):
     """Возврат к заказу без добавления трек-номера"""
     data = await state.get_data()
     order_id = data.get("tracking_order_id")
-    status_filter = data.get("orders_filter", None)
-    page = data.get("orders_page", 0)
-
     await state.clear()
-
-    # Устанавливаем ID текущего сообщения (запрос трек-номера) как фото-сообщение,
-    # чтобы show_orders_list отредактировала именно его
-    await state.update_data(last_orders_photo_message_id=callback.message.message_id)
-
+    
     if order_id:
-        await show_orders_list(callback.message, state, status_filter, page)
+        await show_order_detail(callback.message, state, order_id)
     else:
-        await callback.message.edit_text("❌ Заказ не найден.")
+        try:
+            await callback.message.edit_text("❌ Заказ не найден.")
+        except Exception:
+            await callback.message.answer("❌ Заказ не найден.")
     await callback.answer()
     
     
@@ -1203,3 +1123,108 @@ async def confirm_clear_tracking_callback(callback: CallbackQuery, state: FSMCon
         )
         
         
+async def show_order_detail(message: Message, state: FSMContext, order_id: int):
+    """Показать подробную карточку конкретного заказа"""
+    from db import get_order_by_id, get_product_by_id, format_moscow_time
+    
+    order = await get_order_by_id(order_id)
+    if not order:
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="admin_orders_menu")]]
+        )
+        try:
+            await message.edit_text("❌ Заказ не найден.", reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        except Exception:
+            await message.answer("❌ Заказ не найден.", reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        return
+
+    # Явное присвоение переменных для избежания магических индексов (формат get_order_by_id)
+    o_id = order[0]
+    fullname = order[2] or "не указан"
+    phone = order[3] or "не указан"
+    email = order[4] or "не указан"
+    city = order[5] or "не указан"
+    product_name = order[6] or "не указан"
+    quantity = order[7] or 0
+    delivery_method = order[8] or "не указан"
+    delivery_address = order[9] or "не указан"
+    status = order[10] or "новый"
+    created_at = order[11]
+    tracking_number = order[12]
+    unit_price = order[13] or 0
+    comment = order[14]
+    product_id = order[15]
+
+    total_price = quantity * unit_price
+
+    status_emoji = {
+        "новый": "🆕", "в обработке": "🔄", "отправлен": "📦", "доставлен": "✅", "отменён": "❌",
+    }
+    emoji = status_emoji.get(status, "📌")
+
+    text = (
+        f"{emoji} <b>Заказ #{o_id}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>Клиент:</b> {escape_html(fullname)}\n"
+        f"📞 <b>Телефон:</b> {escape_html(phone)}\n"
+        f"📧 <b>Email:</b> {escape_html(email)}\n"
+        f"🏙️ <b>Город:</b> {escape_html(city)}\n\n"
+        f"🛒 <b>Товар:</b> {escape_html(product_name)}\n"
+        f"📦 <b>Количество:</b> {quantity} шт.\n"
+        f"💰 <b>Цена за шт.:</b> {unit_price} ₽\n"
+        f"💵 <b>Сумма:</b> {total_price} ₽\n"
+        f"🚚 <b>Доставка:</b> {escape_html(delivery_method)}\n"
+        f"📍 <b>Адрес:</b> {escape_html(delivery_address)}\n"
+    )
+
+    if tracking_number:
+        text += f"📦 <b>Трек-номер:</b> {escape_html(tracking_number)}\n"
+    if comment:
+        text += f"📝 <b>Комментарий:</b> {escape_html(comment)}\n"
+
+    text += (
+        f"📌 <b>Статус:</b> {status}\n"
+        f"📅 <b>Создан:</b> {format_moscow_time(created_at)}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+    )
+
+    # Формирование клавиатуры
+    keyboard_rows = []
+    keyboard_rows.append([InlineKeyboardButton(text="🔄 Изменить статус", callback_data=f"change_status_{o_id}")])
+    if tracking_number:
+        keyboard_rows.append([InlineKeyboardButton(text="🗑 Очистить трек", callback_data=f"clear_tracking_{o_id}")])
+    
+    keyboard_rows.append([InlineKeyboardButton(text="⬅️ Назад к списку", callback_data="back_to_orders_list")])
+    keyboard_rows.append([InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="admin_orders_menu")])
+    
+    keyboard_rows = [row for row in keyboard_rows if row]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
+
+    # Обработка фото (Rule 2: try/except + fallback)
+    product_image = None
+    if product_id:
+        product = await get_product_by_id(product_id)
+        if product and len(product) > 7:
+            product_image = product[7]
+
+    try:
+        if product_image:
+            await message.bot.edit_message_media(
+                chat_id=message.chat.id,
+                message_id=message.message_id,
+                media=InputMediaPhoto(media=product_image, caption=text, parse_mode=ParseMode.HTML),
+                reply_markup=keyboard,
+            )
+        else:
+            await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.warning(f"show_order_detail edit failed: {e}, fallback to new message")
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        
+        if product_image:
+            await message.answer_photo(photo=product_image, caption=text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        else:
+            await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
