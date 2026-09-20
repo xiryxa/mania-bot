@@ -12,7 +12,7 @@ from aiogram.types import (
     Message,
 )
 
-from db import escape_html, get_product_by_id, get_products_by_category
+from db import escape_html, get_product_by_id, get_products_by_category, get_product_stock, subscribe_to_product
 from config import CATEGORY_MAP
 
 # ==================== НАСТРОЙКА ====================
@@ -158,6 +158,10 @@ async def show_product_card(
     product = products[page]
     total = len(products)
 
+    # Получаем актуальный остаток из БД, чтобы не показывать устаревшие данные из кэша state
+    fresh_quantity = await get_product_stock(product['id'])
+    product['quantity'] = fresh_quantity
+    
     quantity = product.get("quantity", 0)
     
     # Логика отображения наличия и кнопки заказа
