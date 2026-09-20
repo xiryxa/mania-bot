@@ -159,7 +159,16 @@ async def show_product_card(
     total = len(products)
 
     quantity = product.get("quantity", 0)
-    stock_status = f"📦 В наличии: {quantity} шт." if quantity > 0 else "❌ Нет в наличии"
+    
+    # Логика отображения наличия и кнопки заказа
+    if quantity > 0:
+        stock_status = f"📦 В наличии: {quantity} шт."
+        order_text = "📩 Заказать"
+        order_callback = f"order_product_{product['id']}"
+    else:
+        stock_status = "❌ Нет в наличии"
+        order_text = "🔔 Оповестить о наличии"
+        order_callback = f"subscribe_product_{product['id']}"
 
     text = (
         f"🦆 <b>{escape_html(product['name'])}</b>\n\n"
@@ -198,8 +207,8 @@ async def show_product_card(
             nav_buttons if nav_buttons else [],
             [
                 InlineKeyboardButton(
-                    text="📩 Заказать",
-                    callback_data=f"order_product_{product['id']}",
+                    text=order_text,
+                    callback_data=order_callback,
                 ),
                 InlineKeyboardButton(
                     text="📋 Список",
@@ -460,3 +469,21 @@ async def start_shop_callback(callback: CallbackQuery):
         parse_mode=ParseMode.HTML,
     )
     await callback.answer()
+    
+    
+@router.callback_query(F.data.startswith("subscribe_product_"))
+async def subscribe_product_callback(callback: CallbackQuery):
+    """Обработка нажатия на кнопку 'Оповестить о наличии'"""
+    product_id = int(callback.data.split("_")[2])
+    user_id = callback.from_user.id
+    
+    from db import subscribe_to_product
+    result = await subscribe_to_product(user_id, product_id)
+    
+    if result["success"]:
+        await callback.answer("🔔 Вы получите уведомление, когда товар появится в наличии!", show_alert=True)
+    else:
+        # Используем фактическое сообщение из БД
+        await callback.answer(result["message"], show_alert=True)
+        
+        
