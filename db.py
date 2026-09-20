@@ -193,10 +193,10 @@ async def get_all_user_ids() -> list[int]:
 
 # ==================== РАБОТА С ТОВАРАМИ ====================
 async def get_products():
-    """Получить активные товары в наличии (quantity > 0)"""
+    """Получить все активные товары (включая те, у которых quantity == 0)"""
     async with aiosqlite.connect(DATABASE) as db:
         cursor = await db.execute(
-            "SELECT * FROM products WHERE quantity > 0 AND is_active = 1"
+            "SELECT * FROM products WHERE is_active = 1"
         )
         return await cursor.fetchall()
 
@@ -250,11 +250,11 @@ async def decrease_product_stock(product_id: int, quantity: int) -> bool:
 
 
 async def get_products_by_category(category: str) -> list:
-    """Получить активные товары по категории (только те, у которых quantity > 0)"""
+    """Получить активные товары по категории (включая те, у которых quantity == 0)"""
     async with aiosqlite.connect(DATABASE) as db:
         cursor = await db.execute(
             "SELECT id, name, description, price, category, image_file_id, quantity "
-            "FROM products WHERE category = ? AND quantity > 0 AND is_active = 1 "
+            "FROM products WHERE category = ? AND is_active = 1 "
             "ORDER BY sort_order ASC, id ASC",
             (category,),
         )
