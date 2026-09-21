@@ -12,7 +12,16 @@ from aiogram.types import (
     Message,
 )
 
-from db import escape_html, get_product_by_id, get_products_by_category, get_product_stock, subscribe_to_product
+from db import(
+    escape_html,
+    get_product_by_id,
+    get_products_by_category,
+    get_product_stock,
+    subscribe_to_product,
+    CAPTION_LIMIT,
+    visible_len,
+    truncate_plain
+)
 from config import CATEGORY_MAP
 
 # ==================== НАСТРОЙКА ====================
@@ -161,9 +170,9 @@ async def show_product_card(
     # Получаем актуальный остаток из БД, чтобы не показывать устаревшие данные из кэша state
     fresh_quantity = await get_product_stock(product['id'])
     product['quantity'] = fresh_quantity
-    
+
     quantity = product.get("quantity", 0)
-    
+
     # Логика отображения наличия и кнопки заказа
     if quantity > 0:
         stock_status = f"📦 В наличии: {quantity} шт."
@@ -174,13 +183,17 @@ async def show_product_card(
         order_text = "🔔 Оповестить о наличии"
         order_callback = f"subscribe_product_{product['id']}"
 
-    text = (
+    # Безопасный caption: описание обрезается с учётом бюджета каркаса
+    head = (
         f"🦆 <b>{escape_html(product['name'])}</b>\n\n"
         f"💰 <b>Цена:</b> {product['price']} ₽\n"
         f"🏷️ <b>Категория:</b> {escape_html(product['category'])}\n\n"
-        f"📝 {escape_html(product['description'])}\n\n"
-        f"{stock_status}"
+        f"📝 "
     )
+    tail = f"\n\n{stock_status}"
+
+    budget = CAPTION_LIMIT - visible_len(head + tail) - 4
+    text = head + escape_html(truncate_plain(product['description'], budget)) + tail
 
     nav_buttons = []
     if page > 0:

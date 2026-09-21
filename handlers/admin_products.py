@@ -21,8 +21,11 @@ from db import (
     get_product_by_id,
     restore_product,
     update_product,
-    update_product_image
-)
+    update_product_image,
+    CAPTION_LIMIT,
+    visible_len,
+    truncate_plain
+) 
 from filters import IsAdmin
 from forms.users import AdminProductEditState, AdminProductState
 from config import CATEGORY_MAP
@@ -132,17 +135,23 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
     quantity = product[5]
     stock_status = f"📦 В наличии: {quantity} шт."
 
-    text = (
+    # Безопасный caption: описание обрезается с учётом бюджета каркаса
+    head = (
         f"📦 <b>Товар {page + 1} из {total}</b>\n"
         f"━━━━━━━━━━━━━━━━━\n\n"
         f"🆔 ID: <code>{product[0]}</code>\n"
         f" Название: <b>{escape_html(product[1])}</b>\n"
-        f" Описание: {escape_html(product[2][:100] + ('...' if len(product[2]) > 100 else ''))}\n"
-        f"💰 Цена: {product[3]} ₽\n"
+        f" Описание: "
+    )
+    tail = (
+        f"\n💰 Цена: {product[3]} ₽\n"
         f"🏷️ Категория: {escape_html(product[4])}\n"
         f"{stock_status}\n"
         f"📷 Фото: {'✅ есть' if product[7] else '❌ нет'}"
     )
+
+    budget = CAPTION_LIMIT - visible_len(head + tail) - 4
+    text = head + escape_html(truncate_plain(product[2], budget)) + tail
 
     nav_buttons = []
     if page > 0:
@@ -598,18 +607,24 @@ async def product_edit_select(callback: CallbackQuery, state: FSMContext):
     await state.update_data(editing_product_id=product_id)
     await state.set_state(AdminProductState.editing_field)
 
-    text = (
+    # Безопасный caption: описание обрезается с учётом бюджета каркаса
+    head = (
         f"✏️ <b>Редактирование товара</b>\n"
         f"━━━━━━━━━━━━━━━━━\n\n"
         f"🆔 ID: <code>{product[0]}</code>\n"
         f"📌 <b>Название:</b> {escape_html(product[1])}\n"
-        f"📝 <b>Описание:</b> {escape_html(product[2][:50] + ('...' if len(product[2]) > 50 else ''))}\n"
-        f"💰 <b>Цена:</b> {product[3]} ₽\n"
+        f"📝 <b>Описание:</b> "
+    )
+    tail = (
+        f"\n💰 <b>Цена:</b> {product[3]} ₽\n"
         f"🏷️ <b>Категория:</b> {escape_html(product[4])}\n"
         f"📦 <b>В наличии:</b> {product[5]} шт.\n"
         f"📷 <b>Фото:</b> {'✅ есть' if product[7] else '❌ нет'}\n\n"
         f"Выберите поле для изменения:"
     )
+
+    budget = CAPTION_LIMIT - visible_len(head + tail) - 4
+    text = head + escape_html(truncate_plain(product[2], budget)) + tail
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -653,7 +668,6 @@ async def product_edit_select(callback: CallbackQuery, state: FSMContext):
                 parse_mode=ParseMode.HTML,
             )
     else:
-        # Фото нет — оставляем баннер
         await render_admin_banner(callback.message, text, keyboard)
     await callback.answer()
 
@@ -1069,19 +1083,26 @@ async def show_deleted_product(message: Message, state: FSMContext, page: int):
     logger.info(f"show_deleted_product: page={page}, product_id={product[0]}, has_photo={bool(product[7])}, photo_id={product[7] if product[7] else 'None'}")
 
     quantity = product[5]
-    text = (
-        f" <b>Удалённый товар {page + 1} из {total}</b>\n"
+
+    # Безопасный caption: описание обрезается с учётом бюджета каркаса
+    head = (
+        f"🗑 <b>Удалённый товар {page + 1} из {total}</b>\n"
         f"━━━━━━━━━━━━━━━━━\n\n"
         f"🆔 ID: <code>{product[0]}</code>\n"
-        f" Название: <b>{escape_html(product[1])}</b>\n"
-        f" Описание: {escape_html(product[2][:100] + ('...' if len(product[2]) > 100 else ''))}\n"
-        f"💰 Цена: {product[3]} ₽\n"
+        f"📌 Название: <b>{escape_html(product[1])}</b>\n"
+        f"📝 Описание: "
+    )
+    tail = (
+        f"\n💰 Цена: {product[3]} ₽\n"
         f"🏷️ Категория: {escape_html(product[4])}\n"
         f"📦 В наличии: {quantity} шт.\n"
         f"📷 Фото: {'✅ есть' if product[7] else '❌ нет'}\n"
         f"━━━━━━━━━━━━━━━━━\n"
         f"⚠️ Этот товар скрыт из каталога."
     )
+
+    budget = CAPTION_LIMIT - visible_len(head + tail) - 4
+    text = head + escape_html(truncate_plain(product[2], budget)) + tail
 
     nav_buttons = []
     if page > 0:

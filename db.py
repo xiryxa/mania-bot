@@ -2,7 +2,8 @@
 import html
 import logging
 from datetime import datetime, timezone
-
+import html as _html_lib
+import re as _re_lib
 import aiosqlite
 import pytz
 from aiogram.enums import ParseMode
@@ -850,6 +851,25 @@ def escape_html(text):
     if text is None:
         return ""
     return html.escape(str(text))
+
+
+# ==================== БЕЗОПАСНЫЙ CAPTION (лимит Telegram) ====================
+CAPTION_LIMIT = 1024  # лимит Telegram для caption (после парсинга сущностей)
+_TAG_RE = _re_lib.compile(r"</?[a-zA-Z][^>]*>")
+
+
+def visible_len(html_text: str) -> int:
+    """Длина текста так, как её считает Telegram: после парсинга сущностей и без тегов."""
+    return len(_html_lib.unescape(_TAG_RE.sub("", html_text)))
+
+
+def truncate_plain(text, max_len: int) -> str:
+    """Обрезать plain-текст по видимым символам ДО escape_html. Добавляет '...' только при обрезке."""
+    if not text:
+        return ""
+    if len(text) <= max_len:
+        return text
+    return text[:max(0, max_len)].rstrip() + "..."
 
 
 def format_moscow_time(timestamp_str: str) -> str:
