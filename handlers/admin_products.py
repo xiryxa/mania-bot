@@ -623,7 +623,38 @@ async def product_edit_select(callback: CallbackQuery, state: FSMContext):
         ]
     )
 
-    await render_admin_banner(callback.message, text, keyboard)
+    # Если у товара есть фото — показываем его (паттерн из show_admin_product)
+    if product[7]:
+        try:
+            await callback.message.bot.edit_message_media(
+                chat_id=callback.message.chat.id,
+                message_id=callback.message.message_id,
+                media=InputMediaPhoto(
+                    media=product[7],
+                    caption=text,
+                    parse_mode=ParseMode.HTML,
+                ),
+                reply_markup=keyboard,
+            )
+        except Exception as e:
+            error_text = str(e).lower()
+            if "message is not modified" in error_text:
+                await callback.answer()
+                return
+            logger.warning(f"product_edit_select: edit_message_media failed: {e}, sending new photo")
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            await callback.message.answer_photo(
+                photo=product[7],
+                caption=text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML,
+            )
+    else:
+        # Фото нет — оставляем баннер
+        await render_admin_banner(callback.message, text, keyboard)
     await callback.answer()
 
 
