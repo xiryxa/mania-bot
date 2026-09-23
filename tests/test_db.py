@@ -254,3 +254,50 @@ async def test_subscribe_to_product_success_and_duplicate(initialized_db):
     # 4. Проверяем список подписчиков
     subscribers = await db.get_product_subscribers(1)
     assert subscribers == [1]
+
+
+@pytest.mark.asyncio
+async def test_update_product_restocked_flag(initialized_db):
+    """
+    Проверка: корректность флага restocked при изменении остатков товара.
+    """
+    # 1. Создаем товар с quantity=0
+    await db.add_product("Манок", "Описание", 1000, "Утки", 0)
+    product_id = 1
+
+    # 2. Обновляем, оставляя quantity=0 -> restocked должен быть False
+    result1 = await db.update_product(
+        product_id=product_id,
+        name="Манок",
+        description="Описание",
+        price=1000,
+        category="Утки",
+        quantity=0
+    )
+    assert result1["success"] is True
+    assert result1["restocked"] is False
+
+    # 3. Обновляем до quantity=5 -> restocked должен быть True (переход 0 -> >0)
+    result2 = await db.update_product(
+        product_id=product_id,
+        name="Манок",
+        description="Описание",
+        price=1000,
+        category="Утки",
+        quantity=5
+    )
+    assert result2["success"] is True
+    assert result2["restocked"] is True
+
+    # 4. Обновляем с 5 до 10 -> restocked должен быть False (уже был >0)
+    result3 = await db.update_product(
+        product_id=product_id,
+        name="Манок",
+        description="Описание",
+        price=1000,
+        category="Утки",
+        quantity=10
+    )
+    assert result3["success"] is True
+    assert result3["restocked"] is False
+    
