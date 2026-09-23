@@ -205,3 +205,30 @@ async def test_update_order_status_atomic_restore_insufficient_stock(initialized
     order = await db.get_order_by_id(order_id)
     assert order[10] == "отменён"
     assert await db.get_product_stock(1) == 0
+    
+    
+@pytest.mark.asyncio
+async def test_delete_product_soft_delete(initialized_db):
+    """
+    Проверка: мягкое удаление товара (delete_product).
+    Товар должен исчезнуть из активных и появиться в удаленных.
+    """
+    # 1. Создаем товар
+    await db.add_product("Манок", "Описание", 1000, "Утки", 5)
+    
+    # 2. Проверяем, что он активен
+    active_products = await db.get_all_products()
+    assert len(active_products) == 1
+    product_id = active_products[0][0]
+    
+    # 3. Скрываем товар
+    result = await db.delete_product(product_id)
+    assert result["success"] is True
+    assert result["active_orders"] == 0
+    
+    # 4. Проверяем, что он исчез из активных и появился в удаленных
+    assert len(await db.get_all_products()) == 0
+    
+    deleted_products = await db.get_deleted_products()
+    assert len(deleted_products) == 1
+    assert deleted_products[0][0] == product_id
