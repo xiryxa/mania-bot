@@ -213,6 +213,10 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
     try:
         await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
     except Exception:
+        try:
+            await message.delete()
+        except Exception:
+            pass
         await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 
