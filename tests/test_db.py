@@ -232,3 +232,25 @@ async def test_delete_product_soft_delete(initialized_db):
     deleted_products = await db.get_deleted_products()
     assert len(deleted_products) == 1
     assert deleted_products[0][0] == product_id
+    
+    
+@pytest.mark.asyncio
+async def test_subscribe_to_product_success_and_duplicate(initialized_db):
+    """
+    Проверка: успешная подписка на товар и отказ при повторной подписке.
+    """
+    # 1. Создаем пользователя и товар
+    await db.add_user(1, "Иван Петров", "+79000000000", "test@test.com", "Москва")
+    await db.add_product("Манок", "Описание", 1000, "Утки", 5)
+    
+    # 2. Первая подписка успешна
+    result1 = await db.subscribe_to_product(1, 1)
+    assert result1["success"] is True
+    
+    # 3. Повторная подписка того же пользователя на тот же товар отклонена
+    result2 = await db.subscribe_to_product(1, 1)
+    assert result2["success"] is False
+    
+    # 4. Проверяем список подписчиков
+    subscribers = await db.get_product_subscribers(1)
+    assert subscribers == [1]
