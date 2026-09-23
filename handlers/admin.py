@@ -23,7 +23,6 @@ from db import (
     get_orders,
     get_user_count,
     get_users,
-    return_stock_on_cancel,
     update_order_status,
     update_order_tracking_number,
     clear_order_tracking_number,

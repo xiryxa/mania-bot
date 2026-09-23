@@ -698,35 +698,6 @@ async def update_product_image(product_id: int, image_file_id: str) -> bool:
         return True
 
 
-async def return_stock_on_cancel(order_id: int) -> bool:
-    """
-    Вернуть товар на склад при отмене заказа.
-    Возвращает True, если успешно.
-    """
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute(
-            "SELECT product_id, quantity FROM orders WHERE id = ?",
-            (order_id,),
-        )
-        result = await cursor.fetchone()
-        if not result:
-            logger.warning(f"Order {order_id} not found for stock return")
-            return False
-
-        product_id, quantity = result
-
-        if not product_id:
-            logger.warning(f"Order {order_id} has no product_id")
-            return False
-
-        await db.execute(
-            "UPDATE products SET quantity = quantity + ? WHERE id = ?",
-            (quantity, product_id),
-        )
-        await db.commit()
-        logger.info(f"✅ Returned {quantity} units to stock for product {product_id} (order {order_id})")
-        return True
-
 
 async def get_orders_paginated(status_filter: str = None, offset: int = 0, limit: int = 5):
     """
