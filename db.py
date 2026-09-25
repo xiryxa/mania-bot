@@ -19,6 +19,7 @@ DATABASE = "users.sqlite"
 # ==================== ИНИЦИАЛИЗАЦИЯ БД ====================
 async def init_db():
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         # ---------- Таблица пользователей ----------
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -132,6 +133,7 @@ async def init_db():
 # ==================== РАБОТА С ПОЛЬЗОВАТЕЛЯМИ ====================
 async def get_user_by_telegram_id(telegram_id: int):
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT id, fullname, phone, email, city, address, username, created_at "
             "FROM users WHERE id = ?",
@@ -153,6 +155,7 @@ async def add_user(
     if created_at is None:
         created_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute(
             "INSERT INTO users (id, fullname, phone, email, city, address, username, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -171,6 +174,7 @@ async def update_user(
     username: str = None,
 ):
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute(
             "UPDATE users SET fullname = ?, phone = ?, email = ?, city = ?, address = ?, username = ? "
             "WHERE id = ?",
@@ -181,6 +185,7 @@ async def update_user(
 
 async def get_users():
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT id, fullname, phone, email, city, address, username, created_at "
             "FROM users ORDER BY id"
@@ -190,6 +195,7 @@ async def get_users():
 
 async def get_user_count():
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute("SELECT COUNT(*) FROM users")
         result = await cursor.fetchone()
         return result[0] if result else 0
@@ -201,6 +207,7 @@ async def get_all_user_ids() -> list[int]:
     Используется для массовой рассылки.
     """
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute("SELECT id FROM users ORDER BY id")
         rows = await cursor.fetchall()
         return [row[0] for row in rows]
@@ -209,6 +216,7 @@ async def get_all_user_ids() -> list[int]:
 async def get_products():
     """Получить все активные товары (включая те, у которых quantity == 0)"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT * FROM products WHERE is_active = 1"
         )
@@ -218,6 +226,7 @@ async def get_products():
 async def get_all_products():
     """Получить все активные товары"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT id, name, description, price, category, quantity, ozon_url, image_file_id "
             "FROM products WHERE is_active = 1 ORDER BY sort_order ASC, id ASC"
@@ -228,6 +237,7 @@ async def get_all_products():
 async def get_product_by_id(product_id: int):
     """Получить товар по ID"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT id, name, description, price, category, quantity, ozon_url, image_file_id "
             "FROM products WHERE id = ?",
@@ -239,6 +249,7 @@ async def get_product_by_id(product_id: int):
 async def get_product_stock(product_id: int) -> int:
     """Получить количество товара на складе"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT quantity FROM products WHERE id = ?",
             (product_id,),
@@ -256,6 +267,7 @@ async def decrease_product_stock(product_id: int, quantity: int) -> bool:
     Возвращает True, если списание прошло успешно.
     """
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "UPDATE products SET quantity = quantity - ? "
             "WHERE id = ? AND quantity >= ?",
@@ -268,6 +280,7 @@ async def decrease_product_stock(product_id: int, quantity: int) -> bool:
 async def get_products_by_category(category: str) -> list:
     """Получить активные товары по категории (включая те, у которых quantity == 0)"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT id, name, description, price, category, image_file_id, quantity "
             "FROM products WHERE category = ? AND is_active = 1 "
@@ -292,6 +305,7 @@ async def get_products_by_category(category: str) -> list:
 # ==================== РАБОТА С ЗАКАЗАМИ ====================
 async def get_orders():
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute("""
             SELECT
                 orders.id,
@@ -322,6 +336,7 @@ async def get_orders():
 async def get_order_by_id(order_id: int):
     """Получить заказ по ID с данными пользователя и товара"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute("""
             SELECT
                 orders.id,
@@ -350,6 +365,7 @@ async def get_order_by_id(order_id: int):
 
 async def update_order_status(order_id: int, status: str):
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute(
             "UPDATE orders SET status = ? WHERE id = ?",
             (status, order_id),
@@ -363,6 +379,7 @@ async def update_order_status_atomic(order_id: int, new_status: str) -> dict:
     Возвращает dict: {"success": bool, "message": str, "old_status": str, "new_status": str}
     """
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         # 1. Получаем текущее состояние заказа
         cursor = await db.execute(
             "SELECT status, product_id, quantity FROM orders WHERE id = ?",
@@ -439,6 +456,7 @@ async def update_order_status_atomic(order_id: int, new_status: str) -> dict:
 
 async def update_order_comment(order_id: int, comment: str):
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute(
             "UPDATE orders SET comment = ? WHERE id = ?",
             (comment, order_id),
@@ -449,6 +467,7 @@ async def update_order_comment(order_id: int, comment: str):
 async def get_orders_count(status_filter: str = None) -> int:
     """Получить количество заказов с фильтром"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         if status_filter == "active":
             cursor = await db.execute(
                 "SELECT COUNT(*) FROM orders WHERE status IN (?, ?, ?)",
@@ -470,6 +489,7 @@ async def get_orders_count(status_filter: str = None) -> int:
 async def get_user_orders_count(user_id: int) -> int:
     """Получить количество заказов пользователя"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT COUNT(*) FROM orders WHERE user_id = ?",
             (user_id,),
@@ -487,6 +507,7 @@ async def create_order_and_decrease_stock(
     comment: str = None,
 ) -> dict:
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         # 1. Получаем текущие данные пользователя для снепшота
         cursor = await db.execute(
             "SELECT fullname, phone FROM users WHERE id = ?",
@@ -564,6 +585,7 @@ async def add_product(
     image_file_id: str = None,
 ):
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute(
             "INSERT INTO products "
             "(name, description, price, category, image_file_id, ozon_url, quantity) "
@@ -584,6 +606,7 @@ async def update_product(
     ozon_url: str = None,
 ) -> dict:
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT quantity FROM products WHERE id = ?",
             (product_id,),
@@ -623,6 +646,7 @@ async def delete_product(product_id: int) -> dict:
     has_active, count = await check_product_has_active_orders(product_id)
 
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute(
             "UPDATE products SET is_active = 0 WHERE id = ?",
             (product_id,),
@@ -642,6 +666,7 @@ async def delete_product(product_id: int) -> dict:
 async def get_deleted_products():
     """Получить все удалённые (скрытые) товары (is_active = 0)"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT id, name, description, price, category, quantity, ozon_url, image_file_id "
             "FROM products WHERE is_active = 0 ORDER BY id DESC"
@@ -652,6 +677,7 @@ async def get_deleted_products():
 async def restore_product(product_id: int) -> bool:
     """Восстановить скрытый товар"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute(
             "UPDATE products SET is_active = 1 WHERE id = ?",
             (product_id,),
@@ -666,6 +692,7 @@ async def check_product_has_active_orders(product_id: int) -> tuple[bool, int]:
     Возвращает: (есть_ли_активные, количество_активных)
     """
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT COUNT(*) FROM orders "
             "WHERE product_id = ? AND status NOT IN ('доставлен', 'отменён')",
@@ -680,6 +707,7 @@ async def check_product_has_active_orders(product_id: int) -> tuple[bool, int]:
 async def update_order_tracking_number(order_id: int, tracking_number: str):
     """Обновить трек-номер заказа"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute(
             "UPDATE orders SET tracking_number = ? WHERE id = ?",
             (tracking_number, order_id),
@@ -690,6 +718,7 @@ async def update_order_tracking_number(order_id: int, tracking_number: str):
 async def update_product_image(product_id: int, image_file_id: str) -> bool:
     """Обновить фото товара"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute(
             "UPDATE products SET image_file_id = ? WHERE id = ?",
             (image_file_id, product_id),
@@ -705,6 +734,7 @@ async def get_orders_paginated(status_filter: str = None, offset: int = 0, limit
     status_filter: None — все, 'active' — новый + в обработке + отправлен, 'completed' — доставлен + отменён
     """
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         if status_filter == "active":
             where_clause = "WHERE orders.status IN ('новый', 'в обработке', 'отправлен')"
         elif status_filter == "completed":
@@ -743,6 +773,7 @@ async def get_orders_paginated(status_filter: str = None, offset: int = 0, limit
 async def get_user_orders_count_by_status(user_id: int, statuses: list) -> int:
     """Получить количество заказов пользователя с определёнными статусами"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         placeholders = ",".join(["?"] * len(statuses))
         cursor = await db.execute(
             f"SELECT COUNT(*) FROM orders WHERE user_id = ? AND status IN ({placeholders})",
@@ -760,6 +791,7 @@ async def get_user_orders_paginated_by_status(
 ):
     """Получить заказы пользователя с фильтром по статусам"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         if statuses:
             placeholders = ",".join(["?"] * len(statuses))
             query = f"""
@@ -874,6 +906,7 @@ async def check_and_notify_low_stock(
         return False
 
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT low_stock_notified FROM products WHERE id = ?",
             (product_id,),
@@ -980,6 +1013,7 @@ def get_status_notification_text(
 async def clear_order_tracking_number(order_id: int):
     """Очищает трек-номер заказа (используется при откате статуса из 'отправлен')"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute(
             "UPDATE orders SET tracking_number = NULL WHERE id = ?",
             (order_id,),
@@ -995,6 +1029,7 @@ async def subscribe_to_product(user_id: int, product_id: int) -> dict:
     Возвращает dict: {"success": bool, "message": str}
     """
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         try:
             await db.execute(
                 "INSERT INTO product_subscriptions (user_id, product_id) VALUES (?, ?)",
@@ -1009,6 +1044,7 @@ async def subscribe_to_product(user_id: int, product_id: int) -> dict:
 async def unsubscribe_from_product(user_id: int, product_id: int) -> bool:
     """Отписать пользователя от товара"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute(
             "DELETE FROM product_subscriptions WHERE user_id = ? AND product_id = ?",
             (user_id, product_id)
@@ -1020,6 +1056,7 @@ async def unsubscribe_from_product(user_id: int, product_id: int) -> bool:
 async def get_product_subscribers(product_id: int) -> list[int]:
     """Получить список user_id подписчиков на товар"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT user_id FROM product_subscriptions WHERE product_id = ?",
             (product_id,)
@@ -1031,6 +1068,7 @@ async def get_product_subscribers(product_id: int) -> list[int]:
 async def delete_subscription(user_id: int, product_id: int) -> bool:
     """Удалить подписку (используется после успешной отправки уведомления)"""
     async with aiosqlite.connect(DATABASE) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute(
             "DELETE FROM product_subscriptions WHERE user_id = ? AND product_id = ?",
             (user_id, product_id)
