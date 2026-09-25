@@ -301,3 +301,34 @@ async def test_update_product_restocked_flag(initialized_db):
     assert result3["success"] is True
     assert result3["restocked"] is False
     
+@pytest.mark.asyncio
+async def test_order_tracking_number_update_and_clear(initialized_db):
+    """
+    Проверка: установка и очистка трек-номера заказа.
+    """
+    # 1. Создаем пользователя и товар
+    await db.add_user(1, "Иван Петров", "+79000000000", "test@test.com", "Москва")
+    await db.add_product("Манок", "Описание", 1000, "Утки", 5)
+    
+    # 2. Создаем заказ и получаем его ID
+    order_res = await db.create_order_and_decrease_stock(
+        user_id=1, product_id=1, quantity=1, 
+        delivery_method="Почта", delivery_address="Москва"
+    )
+    order_id = order_res["order_id"]
+    assert order_id is not None
+    
+    # 3. Устанавливаем трек-номер
+    await db.update_order_tracking_number(order_id, "123456789")
+    
+    # 4. Проверяем, что трек-номер сохранился (индекс 12 = tracking_number в get_order_by_id)
+    order = await db.get_order_by_id(order_id)
+    assert order[12] == "123456789"
+    
+    # 5. Очищаем трек-номер
+    await db.clear_order_tracking_number(order_id)
+    
+    # 6. Проверяем, что трек-номер стал None
+    order_cleared = await db.get_order_by_id(order_id)
+    assert order_cleared[12] is None
+    
