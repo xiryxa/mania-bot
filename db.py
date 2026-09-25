@@ -210,7 +210,7 @@ async def get_all_user_ids() -> list[int]:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("SELECT id FROM users ORDER BY id")
         rows = await cursor.fetchall()
-        return [row[0] for row in rows]
+        return [row["id"] for row in rows]
 
 # ==================== РАБОТА С ТОВАРАМИ ====================
 async def get_products():
@@ -255,7 +255,7 @@ async def get_product_stock(product_id: int) -> int:
             (product_id,),
         )
         result = await cursor.fetchone()
-        return result[0] if result else 0
+        return result["quantity"] if result else 0
 
 
 
@@ -290,13 +290,13 @@ async def get_products_by_category(category: str) -> list:
         rows = await cursor.fetchall()
         return [
             {
-                "id": row[0],
-                "name": row[1],
-                "description": row[2],
-                "price": row[3],
-                "category": row[4],
-                "image_file_id": row[5],
-                "quantity": row[6],
+                "id": row["id"],
+                "name": row["name"],
+                "description": row["description"],
+                "price": row["price"],
+                "category": row["category"],
+                "image_file_id": row["image_file_id"],
+                "quantity": row["quantity"],
             }
             for row in rows
         ]
@@ -403,7 +403,7 @@ async def update_order_status_atomic(order_id: int, new_status: str) -> dict:
             if product_id and quantity > 0:
                 cursor = await db.execute("SELECT quantity FROM products WHERE id = ?", (product_id,))
                 stock_res = await cursor.fetchone()
-                old_quantity = stock_res[0] if stock_res else 0
+                old_quantity = stock_res["quantity"] if stock_res else 0
                 
                 await db.execute(
                     "UPDATE products SET quantity = quantity + ? WHERE id = ?",
@@ -422,7 +422,7 @@ async def update_order_status_atomic(order_id: int, new_status: str) -> dict:
                     (product_id,)
                 )
                 stock_res = await cursor.fetchone()
-                current_stock = stock_res[0] if stock_res else 0
+                current_stock = stock_res["quantity"] if stock_res else 0
                 
                 if current_stock < quantity:
                     return {
@@ -514,8 +514,8 @@ async def create_order_and_decrease_stock(
             (user_id,),
         )
         user_data = await cursor.fetchone()
-        order_fullname = user_data[0] if user_data and user_data[0] else "Не указано"
-        order_phone = user_data[1] if user_data and user_data[1] else "Не указано"
+        order_fullname = user_data["fullname"] if user_data and user_data["fullname"] else "Не указано"
+        order_phone = user_data["phone"] if user_data and user_data["phone"] else "Не указано"
 
         # 2. Получаем цену товара (для записи в orders.unit_price)
         cursor = await db.execute(
@@ -527,7 +527,7 @@ async def create_order_and_decrease_stock(
         if not result:
             return {"success": False, "message": "Товар не найден.", "order_id": None}
 
-        unit_price = result[0]
+        unit_price = result["price"]
 
         # 3. Атомарное списание остатка с проверкой
         cursor = await db.execute(
@@ -543,7 +543,7 @@ async def create_order_and_decrease_stock(
                 (product_id,),
             )
             stock_row = await cursor.fetchone()
-            current_stock = stock_row[0] if stock_row else 0
+            current_stock = stock_row["quantity"] if stock_row else 0
             return {
                 "success": False,
                 "message": f"Недостаточно товара на складе. Доступно: {current_stock} шт.",
@@ -612,7 +612,7 @@ async def update_product(
             (product_id,),
         )
         result = await cursor.fetchone()
-        old_quantity = result[0] if result else 0
+        old_quantity = result["quantity"] if result else 0
 
         await db.execute(
             "UPDATE products SET "
@@ -916,7 +916,7 @@ async def check_and_notify_low_stock(
         if not result:
             return False
 
-        already_notified = result[0]
+        already_notified = result["low_stock_notified"]
 
         if already_notified:
             return False
@@ -1062,7 +1062,7 @@ async def get_product_subscribers(product_id: int) -> list[int]:
             (product_id,)
         )
         rows = await cursor.fetchall()
-        return [row[0] for row in rows]
+        return [row["user_id"] for row in rows]
 
 
 async def delete_subscription(user_id: int, product_id: int) -> bool:
