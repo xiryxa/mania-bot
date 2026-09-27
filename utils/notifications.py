@@ -17,7 +17,7 @@ async def notify_back_in_stock(product_id: int, bot: Bot) -> None:
 
     # Получаем название товара для персонализации сообщения
     product = await get_product_by_id(product_id)
-    product_name = escape_html(product[1] if product and len(product) > 1 else "товар")
+    product_name = escape_html(product["name"] if product and "name" in product else "товар")
 
     for user_id in subscribers:
         try:
