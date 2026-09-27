@@ -88,8 +88,8 @@ async def test_order_snapshot_isolation(initialized_db):
     order = await db.get_order_by_id(order_id)
     
     assert order is not None
-    assert order[2] == "Иван Иванов", f"Ожидался 'Иван Иванов', получено: {order[2]}"
-    assert order[3] == "+79001112233", f"Ожидался '+79001112233', получено: {order[3]}"
+    assert order["order_fullname"] == "Иван Иванов", f"Ожидался 'Иван Иванов', получено: {order['order_fullname']}"
+    assert order["order_phone"] == "+79001112233", f"Ожидался '+79001112233', получено: {order['order_phone']}"
 
 
 def test_status_notification_forward_movement():
@@ -203,7 +203,7 @@ async def test_update_order_status_atomic_restore_insufficient_stock(initialized
     
     # Статус заказа не должен измениться, остаток не уйдет в минус
     order = await db.get_order_by_id(order_id)
-    assert order[10] == "отменён"
+    assert order["status"] == "отменён"
     assert await db.get_product_stock(1) == 0
     
     
@@ -219,8 +219,8 @@ async def test_delete_product_soft_delete(initialized_db):
     # 2. Проверяем, что он активен
     active_products = await db.get_all_products()
     assert len(active_products) == 1
-    product_id = active_products[0][0]
-    
+    product_id = active_products[0]["id"]
+
     # 3. Скрываем товар
     result = await db.delete_product(product_id)
     assert result["success"] is True
@@ -231,7 +231,7 @@ async def test_delete_product_soft_delete(initialized_db):
     
     deleted_products = await db.get_deleted_products()
     assert len(deleted_products) == 1
-    assert deleted_products[0][0] == product_id
+    assert deleted_products[0]["id"] == product_id
     
     
 @pytest.mark.asyncio
@@ -321,14 +321,14 @@ async def test_order_tracking_number_update_and_clear(initialized_db):
     # 3. Устанавливаем трек-номер
     await db.update_order_tracking_number(order_id, "123456789")
     
-    # 4. Проверяем, что трек-номер сохранился (индекс 12 = tracking_number в get_order_by_id)
+    # 4. Проверяем, что трек-номер сохранился
     order = await db.get_order_by_id(order_id)
-    assert order[12] == "123456789"
+    assert order["tracking_number"] == "123456789"
     
     # 5. Очищаем трек-номер
     await db.clear_order_tracking_number(order_id)
     
     # 6. Проверяем, что трек-номер стал None
     order_cleared = await db.get_order_by_id(order_id)
-    assert order_cleared[12] is None
+    assert order_cleared["tracking_number"] is None
     
