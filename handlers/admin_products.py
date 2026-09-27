@@ -806,11 +806,28 @@ async def edit_photo_invalid(message: Message, state: FSMContext):
 async def product_edit_field(callback: CallbackQuery, state: FSMContext):
     """Выбор поля для редактирования"""
     field = callback.data.split("_")[2]
+    
+    # Если это категория, показываем кнопки выбора, чтобы избежать ошибок ввода
+    if field == "category":
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🦆 Гусь", callback_data="edit_category_goose")],
+                [InlineKeyboardButton(text="🦆 Утка", callback_data="edit_category_duck")],
+                [InlineKeyboardButton(text="⬅️ Отмена", callback_data="product_edit")],
+            ]
+        )
+        await safe_edit(
+            callback,
+            "🏷️ <b>Выберите новую категорию товара:</b>",
+            keyboard,
+        )
+        await callback.answer()
+        return
+
     field_names = {
         "name": "название",
         "description": "описание",
         "price": "цену",
-        "category": "категорию",
         "quantity": "количество",
     }
 
@@ -828,6 +845,68 @@ async def product_edit_field(callback: CallbackQuery, state: FSMContext):
         f"✏️ Введите новое <b>{field_names.get(field, field)}</b>:",
         keyboard,
     )
+    await callback.answer()
+    
+    
+@router.callback_query(
+    StateFilter(AdminProductState.editing_field),
+    F.data.startswith("edit_category_"),
+    IsAdmin(),
+)
+async def product_edit_category_select(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора категории при редактировании через инлайн-кнопки"""
+    key = callback.data.split("_")[2]
+    new_category = CATEGORY_MAP.get(key, key)
+    
+    data = await state.get_data()
+    product_id = data.get("editing_product_id")
+    
+    if not product_id:
+        await safe_edit(callback, "❌ Ошибка: товар не найден.")
+        await callback.answer()
+        return
+        
+    product = await get_product_by_id(product_id)
+    if not product:
+        await safe_edit(callback, "❌ Товар не найден.")
+        await callback.answer()
+        return
+
+    try:
+        await update_product(
+            product_id=product_id,
+            name=product['name'],
+            description=product['description'],
+            price=product['price'],
+            category=new_category,
+            quantity=product['quantity'],
+            ozon_url=product['ozon_url'],
+            image_file_id=product['image_file_id'],
+        )
+        
+        await safe_edit(
+            callback,
+            f"✅ <b>Категория товара обновлена!</b>\n\n"
+            f"🔹 <b>{escape_html(product['name'])}</b>\n"
+            f"🏷️ Новая категория: {escape_html(new_category)}",
+        )
+        
+        # Возвращаемся в меню редактирования этого товара
+        await state.set_state(AdminProductState.editing_field)
+        await callback.message.answer(
+            "Выберите дальнейшее действие:",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="✏️ Продолжить редактирование", callback_data=f"edit_select_{product_id}")],
+                    [InlineKeyboardButton(text="📦 В управление товарами", callback_data="admin_products")],
+                ]
+            ),
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as e:
+        logger.error(f"Error updating product category: {e}", exc_info=True)
+        await safe_edit(callback, "❌ Ошибка при обновлении категории.")
+    
     await callback.answer()
 
 
