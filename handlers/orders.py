@@ -77,8 +77,8 @@ async def show_quantity_selector(message: Message, state: FSMContext):
     current_stock = await get_product_stock(product_id)
 
     text = (
-        f"🔹 <b>{escape_html(product[1])}</b>\n"
-        f"💰 {product[3]} ₽\n"
+        f"🔹 <b>{escape_html(product['name'])}</b>\n"
+        f"💰 {product['price']} ₽\n"
         f"📦 Доступно: <b>{current_stock}</b> шт.\n\n"
         f"📦 <b>Количество:</b> {quantity} шт."
     )
@@ -152,7 +152,7 @@ async def quantity_control(callback: CallbackQuery, state: FSMContext):
             try:
                 await callback.message.edit_text(
                     f"❌ <b>Недостаточно товара на складе!</b>\n\n"
-                    f"📦 Товар: {escape_html(product[1])}\n"
+                    f"📦 Товар: {escape_html(product['name'])}\n"
                     f"📦 Доступно: <b>{current_stock}</b> шт.\n"
                     f"🛒 Запрошено: <b>{quantity}</b> шт.\n\n"
                     f"Пожалуйста, уменьшите количество или выберите другой товар.",
@@ -163,7 +163,7 @@ async def quantity_control(callback: CallbackQuery, state: FSMContext):
                 logger.warning(f"qty_confirm edit error: {e}")
                 await callback.message.answer(
                     f"❌ <b>Недостаточно товара на складе!</b>\n\n"
-                    f"📦 Товар: {escape_html(product[1])}\n"
+                    f"📦 Товар: {escape_html(product['name'])}\n"
                     f"📦 Доступно: <b>{current_stock}</b> шт.\n"
                     f"🛒 Запрошено: <b>{quantity}</b> шт.\n\n"
                     f"Пожалуйста, уменьшите количество или выберите другой товар.",
@@ -430,17 +430,17 @@ async def create_order_from_state(message: Message, state: FSMContext, user_id: 
         admin_chat_id = ADMIN_IDS[0] if ADMIN_IDS else user_id
 
         new_stock = await get_product_stock(product_id)
-        product_price = product[3] if product else 0
+        product_price = product['price'] if product else 0
         total_price = requested_quantity * product_price
 
         admin_text = (
             f"🆕 <b>Новый заказ!</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👤 <b>Клиент:</b> {escape_html(user[1])}\n"
-            f"📞 <b>Телефон:</b> {escape_html(user[2])}\n"
-            f"📧 <b>Email:</b> {escape_html(user[3] or 'не указан')}\n"
-            f"🏙️ <b>Город:</b> {escape_html(user[4] or 'не указан')}\n"
-            f"🛒 <b>Товар:</b> {escape_html(product[1])}\n"
+            f"👤 <b>Клиент:</b> {escape_html(user['fullname'])}\n"
+            f"📞 <b>Телефон:</b> {escape_html(user['phone'])}\n"
+            f"📧 <b>Email:</b> {escape_html(user['email'] or 'не указан')}\n"
+            f"🏙️ <b>Город:</b> {escape_html(user['city'] or 'не указан')}\n"
+            f"🛒 <b>Товар:</b> {escape_html(product['name'])}\n"
             f"📦 <b>Количество:</b> {requested_quantity}\n"
             f"💰 <b>Цена за шт.:</b> {product_price} ₽\n"
             f"💵 <b>Сумма:</b> {total_price} ₽\n"
@@ -465,7 +465,7 @@ async def create_order_from_state(message: Message, state: FSMContext, user_id: 
                 chat_id=admin_chat_id,
                 text=(
                     f"⚠️ <b>Товар закончился на складе!</b>\n\n"
-                    f"📦 <b>Товар:</b> {escape_html(product[1])}\n"
+                    f"📦 <b>Товар:</b> {escape_html(product['name'])}\n"
                     f"🆔 ID: <code>{product_id}</code>\n\n"
                     f"Чтобы изменить количество, перейдите в редактирование товара."
                 ),
@@ -476,7 +476,7 @@ async def create_order_from_state(message: Message, state: FSMContext, user_id: 
         if new_stock > 0 and new_stock <= LOW_STOCK_THRESHOLD:
             await check_and_notify_low_stock(
                 product_id=product_id,
-                product_name=product[1] if product else "товар",
+                product_name=product['name'] if product else "товар",
                 new_stock=new_stock,
                 bot=message.bot,
                 admin_chat_id=admin_chat_id,
