@@ -132,26 +132,26 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
     product = products[page]
     total = len(products)
 
-    quantity = product[5]
+    quantity = product["quantity"]
     stock_status = f"📦 В наличии: {quantity} шт."
 
     # Безопасный caption: описание обрезается с учётом бюджета каркаса
     head = (
         f"📦 <b>Товар {page + 1} из {total}</b>\n"
         f"━━━━━━━━━━━━━━━━━\n\n"
-        f"🆔 ID: <code>{product[0]}</code>\n"
-        f" Название: <b>{escape_html(product[1])}</b>\n"
+        f"🆔 ID: <code>{product['id']}</code>\n"
+        f" Название: <b>{escape_html(product['name'])}</b>\n"
         f" Описание: "
     )
     tail = (
-        f"\n💰 Цена: {product[3]} ₽\n"
-        f"🏷️ Категория: {escape_html(product[4])}\n"
+        f"\n💰 Цена: {product['price']} ₽\n"
+        f"🏷️ Категория: {escape_html(product['category'])}\n"
         f"{stock_status}\n"
-        f"📷 Фото: {'✅ есть' if product[7] else '❌ нет'}"
+        f"📷 Фото: {'✅ есть' if product['image_file_id'] else '❌ нет'}"
     )
 
     budget = CAPTION_LIMIT - visible_len(head + tail) - 4
-    text = head + escape_html(truncate_plain(product[2], budget)) + tail
+    text = head + escape_html(truncate_plain(product['description'], budget)) + tail
 
     nav_buttons = []
     if page > 0:
@@ -164,8 +164,8 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
         inline_keyboard=[
             nav_buttons if nav_buttons else [],
             [
-                InlineKeyboardButton(text="️✏️ Редактировать", callback_data=f"edit_select_{product[0]}"),
-                InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"delete_confirm_{product[0]}"),
+                InlineKeyboardButton(text="️✏️ Редактировать", callback_data=f"edit_select_{product['id']}"),
+                InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"delete_confirm_{product['id']}"),
             ],
             [
                 InlineKeyboardButton(text="📝 Текстовый список", callback_data="product_list_text"),
@@ -176,14 +176,14 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
     )
 
     # Если есть фото — используем edit_message_media
-    if product[7]:
+    if product['image_file_id']:
         try:
             # Сначала пытаемся отредактировать текущее сообщение
             await message.bot.edit_message_media(
                 chat_id=message.chat.id,
                 message_id=message.message_id,
                 media=InputMediaPhoto(
-                    media=product[7],
+                    media=product['image_file_id'],
                     caption=text,
                     parse_mode=ParseMode.HTML,
                 ),
@@ -197,7 +197,7 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
             # Если не удалось (например, сообщение текстовое), отправляем новое фото
             logger.warning(f"Error editing admin product photo: {e}, sending new")
             photo_msg = await message.answer_photo(
-                photo=product[7],
+                photo=product['image_file_id'],
                 caption=text,
                 reply_markup=keyboard,
                 parse_mode=ParseMode.HTML,
@@ -275,13 +275,13 @@ async def show_admin_product_text(message: Message, state: FSMContext, page: int
     text += "━━━━━━━━━━━━━━━━━\n\n"
 
     for product in page_products:
-        quantity = product[5]
+        quantity = product["quantity"]
         text += (
-            f" <b>{escape_html(product[1])}</b>\n"
-            f"   🆔 ID: <code>{product[0]}</code>\n"
-            f"   🏷️ {escape_html(product[4])} | 💰 {product[3]} ₽\n"
+            f" <b>{escape_html(product['name'])}</b>\n"
+            f"   🆔 ID: <code>{product['id']}</code>\n"
+            f"   🏷️ {escape_html(product['category'])} | 💰 {product['price']} ₽\n"
             f"    В наличии: {quantity} шт.\n"
-            f"   📷 {'🖼️ есть' if product[7] else '❌ нет'}\n"
+            f"   📷 {'🖼️ есть' if product['image_file_id'] else '❌ нет'}\n"
             f"   ─────────────\n"
         )
 
@@ -584,8 +584,8 @@ async def product_edit_start(callback: CallbackQuery, state: FSMContext):
         keyboard.inline_keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=f"✏️ {escape_html(product[1])} (ID: {product[0]})",
-                    callback_data=f"edit_select_{product[0]}",
+                    text=f"✏️ {escape_html(product['name'])} (ID: {product['id']})",
+                    callback_data=f"edit_select_{product['id']}",
                 )
             ]
         )
@@ -615,20 +615,20 @@ async def product_edit_select(callback: CallbackQuery, state: FSMContext):
     head = (
         f"✏️ <b>Редактирование товара</b>\n"
         f"━━━━━━━━━━━━━━━━━\n\n"
-        f"🆔 ID: <code>{product[0]}</code>\n"
-        f"📌 <b>Название:</b> {escape_html(product[1])}\n"
+        f"🆔 ID: <code>{product['id']}</code>\n"
+        f"📌 <b>Название:</b> {escape_html(product['name'])}\n"
         f"📝 <b>Описание:</b> "
     )
     tail = (
-        f"\n💰 <b>Цена:</b> {product[3]} ₽\n"
-        f"🏷️ <b>Категория:</b> {escape_html(product[4])}\n"
-        f"📦 <b>В наличии:</b> {product[5]} шт.\n"
-        f"📷 <b>Фото:</b> {'✅ есть' if product[7] else '❌ нет'}\n\n"
+        f"\n💰 <b>Цена:</b> {product['price']} ₽\n"
+        f"🏷️ <b>Категория:</b> {escape_html(product['category'])}\n"
+        f"📦 <b>В наличии:</b> {product['quantity']} шт.\n"
+        f"📷 <b>Фото:</b> {'✅ есть' if product['image_file_id'] else '❌ нет'}\n\n"
         f"Выберите поле для изменения:"
     )
 
     budget = CAPTION_LIMIT - visible_len(head + tail) - 4
-    text = head + escape_html(truncate_plain(product[2], budget)) + tail
+    text = head + escape_html(truncate_plain(product['description'], budget)) + tail
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -643,13 +643,13 @@ async def product_edit_select(callback: CallbackQuery, state: FSMContext):
     )
 
     # Если у товара есть фото — показываем его (паттерн из show_admin_product)
-    if product[7]:
+    if product['image_file_id']:
         try:
             await callback.message.bot.edit_message_media(
                 chat_id=callback.message.chat.id,
                 message_id=callback.message.message_id,
                 media=InputMediaPhoto(
-                    media=product[7],
+                    media=product['image_file_id'],
                     caption=text,
                     parse_mode=ParseMode.HTML,
                 ),
@@ -666,7 +666,7 @@ async def product_edit_select(callback: CallbackQuery, state: FSMContext):
             except Exception:
                 pass
             await callback.message.answer_photo(
-                photo=product[7],
+                photo=product['image_file_id'],
                 caption=text,
                 reply_markup=keyboard,
                 parse_mode=ParseMode.HTML,
@@ -734,13 +734,13 @@ async def edit_photo_cancel(callback: CallbackQuery, state: FSMContext):
             text = (
                 f"✏️ <b>Редактирование товара</b>\n"
                 f"━━━━━━━━━━━━━━━━━\n\n"
-                f"🆔 ID: <code>{product[0]}</code>\n"
-                f"📌 <b>Название:</b> {escape_html(product[1])}\n"
-                f"📝 <b>Описание:</b> {escape_html(product[2][:50] + ('...' if len(product[2]) > 50 else ''))}\n"
-                f"💰 <b>Цена:</b> {product[3]} ₽\n"
-                f"🏷️ <b>Категория:</b> {escape_html(product[4])}\n"
-                f"📦 <b>В наличии:</b> {product[5]} шт.\n"
-                f"📷 <b>Фото:</b> {'✅ есть' if product[7] else '❌ нет'}\n\n"
+                f"🆔 ID: <code>{product['id']}</code>\n"
+                f"📌 <b>Название:</b> {escape_html(product['name'])}\n"
+                f"📝 <b>Описание:</b> {escape_html(product['description'][:50] + ('...' if len(product['description']) > 50 else ''))}\n"
+                f"💰 <b>Цена:</b> {product['price']} ₽\n"
+                f"🏷️ <b>Категория:</b> {escape_html(product['category'])}\n"
+                f"📦 <b>В наличии:</b> {product['quantity']} шт.\n"
+                f"📷 <b>Фото:</b> {'✅ есть' if product['image_file_id'] else '❌ нет'}\n\n"
                 f"Выберите поле для изменения:"
             )
 
@@ -852,15 +852,15 @@ async def product_edit_value(message: Message, state: FSMContext):
         return
 
     try:
-        current_image = product[7] if product and len(product) > 7 else None
+        current_image = product['image_file_id'] if product and 'image_file_id' in product else None
 
         update_data = {
-            "name": product[1],
-            "description": product[2],
-            "price": product[3],
-            "category": product[4],
-            "quantity": product[5],
-            "ozon_url": product[6],
+            "name": product['name'],
+            "description": product['description'],
+            "price": product['price'],
+            "category": product['category'],
+            "quantity": product['quantity'],
+            "ozon_url": product['ozon_url'],
             "image_file_id": current_image,
         }
 
@@ -961,8 +961,8 @@ async def product_delete_start(callback: CallbackQuery, state: FSMContext):
         keyboard.inline_keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=f"🗑️ {escape_html(product[1])} (ID: {product[0]})",
-                    callback_data=f"delete_confirm_{product[0]}",
+                    text=f"🗑️ {escape_html(product['name'])} (ID: {product['id']})",
+                    callback_data=f"delete_confirm_{product['id']}",
                 )
             ]
         )
@@ -994,10 +994,10 @@ async def product_delete_confirm(callback: CallbackQuery, state: FSMContext):
 
     text = (
         f"🗑️ <b>Подтвердите удаление</b>\n\n"
-        f"🔹 <b>{escape_html(product[1])}</b>\n"
-        f"💰 {product[3]} ₽\n"
-        f"🏷️ {escape_html(product[4])}\n"
-        f"📦 В наличии: {product[5]} шт.\n\n"
+        f"🔹 <b>{escape_html(product['name'])}</b>\n"
+        f"💰 {product['price']} ₽\n"
+        f"🏷️ {escape_html(product['category'])}\n"
+        f"📦 В наличии: {product['quantity']} шт.\n\n"
         f"Вы уверены, что хотите удалить этот товар?"
     )
 
@@ -1084,29 +1084,29 @@ async def show_deleted_product(message: Message, state: FSMContext, page: int):
     total = len(products)
 
     # Добавляем логирование
-    logger.info(f"show_deleted_product: page={page}, product_id={product[0]}, has_photo={bool(product[7])}, photo_id={product[7] if product[7] else 'None'}")
+    logger.info(f"show_deleted_product: page={page}, product_id={product['id']}, has_photo={bool(product['image_file_id'])}, photo_id={product['image_file_id'] if product['image_file_id'] else 'None'}")
 
-    quantity = product[5]
+    quantity = product['quantity']
 
     # Безопасный caption: описание обрезается с учётом бюджета каркаса
     head = (
         f"🗑 <b>Удалённый товар {page + 1} из {total}</b>\n"
         f"━━━━━━━━━━━━━━━━━\n\n"
-        f"🆔 ID: <code>{product[0]}</code>\n"
-        f"📌 Название: <b>{escape_html(product[1])}</b>\n"
+        f"🆔 ID: <code>{product['id']}</code>\n"
+        f"📌 Название: <b>{escape_html(product['name'])}</b>\n"
         f"📝 Описание: "
     )
     tail = (
-        f"\n💰 Цена: {product[3]} ₽\n"
-        f"🏷️ Категория: {escape_html(product[4])}\n"
+        f"\n💰 Цена: {product['price']} ₽\n"
+        f"🏷️ Категория: {escape_html(product['category'])}\n"
         f"📦 В наличии: {quantity} шт.\n"
-        f"📷 Фото: {'✅ есть' if product[7] else '❌ нет'}\n"
+        f"📷 Фото: {'✅ есть' if product['image_file_id'] else '❌ нет'}\n"
         f"━━━━━━━━━━━━━━━━━\n"
         f"⚠️ Этот товар скрыт из каталога."
     )
 
     budget = CAPTION_LIMIT - visible_len(head + tail) - 4
-    text = head + escape_html(truncate_plain(product[2], budget)) + tail
+    text = head + escape_html(truncate_plain(product['description'], budget)) + tail
 
     nav_buttons = []
     if page > 0:
@@ -1118,34 +1118,34 @@ async def show_deleted_product(message: Message, state: FSMContext, page: int):
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             nav_buttons if nav_buttons else [],
-            [InlineKeyboardButton(text="♻️ Восстановить", callback_data=f"restore_confirm_{product[0]}")],
+            [InlineKeyboardButton(text="♻️ Восстановить", callback_data=f"restore_confirm_{product['id']}")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_products")],
         ]
     )
 
     # Если есть фото — используем edit_message_media
-    if product[7]:
+    if product['image_file_id']:
         try:
-            logger.info(f"show_deleted_product: пытаемся edit_message_media для product_id={product[0]}")
+            logger.info(f"show_deleted_product: пытаемся edit_message_media для product_id={product['id']}")
             await message.bot.edit_message_media(
                 chat_id=message.chat.id,
                 message_id=message.message_id,
                 media=InputMediaPhoto(
-                    media=product[7],
+                    media=product['image_file_id'],
                     caption=text,
                     parse_mode=ParseMode.HTML,
                 ),
                 reply_markup=keyboard,
             )
-            logger.info(f"show_deleted_product: edit_message_media успешно для product_id={product[0]}")
+            logger.info(f"show_deleted_product: edit_message_media успешно для product_id={product['id']}")
             return
         except Exception as e:
             error_text = str(e).lower()
             if "message is not modified" in error_text:
                 return
-            logger.warning(f"show_deleted_product: edit_message_media failed для product_id={product[0]}: {e}, sending new photo")
+            logger.warning(f"show_deleted_product: edit_message_media failed для product_id={product['id']}: {e}, sending new photo")
             photo_msg = await message.answer_photo(
-                photo=product[7],
+                photo=product['image_file_id'],
                 caption=text,
                 reply_markup=keyboard,
                 parse_mode=ParseMode.HTML,
@@ -1158,7 +1158,7 @@ async def show_deleted_product(message: Message, state: FSMContext, page: int):
             return
 
     # Если фото нет — используем баннер с текстом
-    logger.info(f"show_deleted_product: нет фото для product_id={product[0]}, показываем баннер с текстом")
+    logger.info(f"show_deleted_product: нет фото для product_id={product['id']}, показываем баннер с текстом")
     await render_admin_banner(message, text, keyboard)
 
 
@@ -1196,10 +1196,10 @@ async def restore_confirm(callback: CallbackQuery, state: FSMContext):
 
     text = (
         f"♻️ <b>Восстановление товара</b>\n\n"
-        f"🔹 <b>{escape_html(product[1])}</b>\n"
-        f"💰 {product[3]} ₽\n"
-        f"🏷️ {escape_html(product[4])}\n"
-        f"📦 В наличии: {product[5]} шт.\n\n"
+        f"🔹 <b>{escape_html(product['name'])}</b>\n"
+        f"💰 {product['price']} ₽\n"
+        f"🏷️ {escape_html(product['category'])}\n"
+        f"📦 В наличии: {product['quantity']} шт.\n\n"
         f"Вы уверены, что хотите восстановить этот товар в каталоге?"
     )
 
