@@ -236,18 +236,18 @@ async def show_profile_orders_list(
         return
 
     order = orders[0]
-    status = order[5] or "новый"
+    status = order["status"] or "новый"
 
-    unit_price = order[9] if len(order) > 9 and order[9] else 0
-    quantity = order[2] or 0
+    unit_price = order["unit_price"] if len(order) > 9 and order["unit_price"] else 0
+    quantity = order["quantity"] or 0
     total_price = quantity * unit_price
 
     product_image = None
-    product_id = order[8]
+    product_id = order["product_id"]
     if product_id:
         product = await get_product_by_id(product_id)
         if product and len(product) > 7:
-            product_image = product[7]
+            product_image = product["image_file_id"]
 
     status_emoji = {
         "новый": "🆕",
@@ -271,27 +271,27 @@ async def show_profile_orders_list(
         f"{title}\n"
         f"━━━━━━━━━━━━━━━━━\n"
         f"📄 Заказ {page + 1} из {total_pages}\n\n"
-        f"{emoji} <b>Заказ #{order[0]}</b>\n"
+        f"{emoji} <b>Заказ #{order['id']}</b>\n"
         f"━━━━━━━━━━━━━━━━━\n"
-        f"🛒 <b>Товар:</b> {escape_html(order[1])}\n"
+        f"🛒 <b>Товар:</b> {escape_html(order['name'])}\n"
         f"📦 <b>Количество:</b> {quantity} шт.\n"
         f"💰 <b>Цена за шт.:</b> {unit_price} ₽\n"
         f"💵 <b>Сумма:</b> {total_price} ₽\n"
-        f"🚚 <b>Доставка:</b> {order[3]}\n"
-        f"📍 <b>Адрес:</b> {escape_html(order[4])}\n"
+        f"🚚 <b>Доставка:</b> {order['delivery_method']}\n"
+        f"📍 <b>Адрес:</b> {escape_html(order['delivery_address'])}\n"
     )
-    if order[10]:
-        text += f"📦 <b>Трек-номер:</b> {escape_html(order[10])}\n"
-    text += f"📅 <b>Дата:</b> {format_moscow_time(order[7])}\n"
+    if order["tracking_number"]:
+        text += f"📦 <b>Трек-номер:</b> {escape_html(order['tracking_number'])}\n"
+    text += f"📅 <b>Дата:</b> {format_moscow_time(order['created_at'])}\n"
     text += f"📌 <b>Статус:</b> {status}\n"
-    if order[6]:
-        text += f"📝 <b>Комментарий:</b> {escape_html(order[6])}\n"
+    if order["comment"]:
+        text += f"📝 <b>Комментарий:</b> {escape_html(order['comment'])}\n"
 
     keyboard_buttons = []
 
     if status == "отправлен":
         keyboard_buttons.append(
-            [InlineKeyboardButton(text="✅ Я получил заказ", callback_data=f"confirm_delivery_{order[0]}")]
+            [InlineKeyboardButton(text="✅ Я получил заказ", callback_data=f"confirm_delivery_{order['id']}")]
         )
 
     pagination_buttons = []
@@ -413,12 +413,12 @@ async def confirm_delivery_callback(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    if order[1] != user_id:
+    if order["user_id"] != user_id:
         await callback.answer("❌ Это не ваш заказ.", show_alert=True)
         return
 
-    # order[10] — это статус заказа
-    if order[10] != "отправлен":
+    # order["status"] — это статус заказа
+    if order["status"] != "отправлен":
         error_text = "❌ Вы можете подтвердить получение только для заказов со статусом «отправлен»."
         try:
             # Пытаемся изменить текст (если это текстовое сообщение)
@@ -446,14 +446,14 @@ async def confirm_delivery_callback(callback: CallbackQuery, state: FSMContext):
         parse_mode=ParseMode.HTML,
     )
 
-    # Уведомление админу
+     # Уведомление админу
     if ADMIN_IDS:
         admin_chat_id = ADMIN_IDS[0]
-        product_name = order[6] or "не указан"
-        fullname = order[2] or "не указан"
+        product_name = order["name"] or "не указан"
+        fullname = order["order_fullname"] or "не указан"
 
-        unit_price = order[13] if len(order) > 13 and order[13] else 0
-        quantity = order[7] or 0
+        unit_price = order["unit_price"] if len(order) > 13 and order["unit_price"] else 0
+        quantity = order["quantity"] or 0
         total_price = quantity * unit_price
 
         admin_text = (
@@ -463,11 +463,11 @@ async def confirm_delivery_callback(callback: CallbackQuery, state: FSMContext):
             f"📦 Количество: {quantity} шт.\n"
             f"💰 Цена за шт.: {unit_price} ₽\n"
             f"💵 Сумма: {total_price} ₽\n"
-            f"🚚 Доставка: {order[8] or 'не указан'}\n"
-            f"📍 Адрес: {escape_html(order[9] or 'не указан')}\n"
+            f"🚚 Доставка: {order['delivery_method'] or 'не указан'}\n"
+            f"📍 Адрес: {escape_html(order['delivery_address'] or 'не указан')}\n"
         )
-        if len(order) > 14 and order[14]:
-            admin_text += f"📝 Комментарий: {escape_html(order[14])}\n"
+        if len(order) > 14 and order["comment"]:
+            admin_text += f"📝 Комментарий: {escape_html(order['comment'])}\n"
 
         await notify_user_safe(callback.bot, chat_id=admin_chat_id, text=admin_text)
 
