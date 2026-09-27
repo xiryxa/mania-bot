@@ -32,9 +32,9 @@ async def show_profile(message: Message, user_data, state: FSMContext = None):
         await state.set_state(ProfileState.viewing)
         await state.update_data(existing_user=user_data)
 
-    orders_count = await get_user_orders_count(user_data[0])
+    orders_count = await get_user_orders_count(user_data["id"])
 
-    created_at_raw = user_data[7] if len(user_data) > 7 else None
+    created_at_raw = user_data["created_at"] if len(user_data) > 7 else None
     if created_at_raw:
         created_at_str = format_moscow_time(created_at_raw)
         created_at_date = created_at_str.split()[0]
@@ -44,11 +44,11 @@ async def show_profile(message: Message, user_data, state: FSMContext = None):
     text = (
         f"👤 <b>Ваш профиль</b>\n"
         f"━━━━━━━━━━━━━━━━━\n\n"
-        f"👤 <b>ФИО:</b> {escape_html(user_data[1]) or 'не указано'}\n"
-        f"📞 <b>Телефон:</b> {escape_html(user_data[2]) or 'не указан'}\n"
-        f"✉️ <b>Email:</b> {escape_html(user_data[3]) or 'не указан'}\n"
-        f"🏙️ <b>Город:</b> {escape_html(user_data[4]) or 'не указан'}\n"
-        f"\n🆔 <b>Юзернейм:</b> @{escape_html(user_data[6]) or 'нет'}\n"
+        f"👤 <b>ФИО:</b> {escape_html(user_data["fullname"]) or 'не указано'}\n"
+        f"📞 <b>Телефон:</b> {escape_html(user_data["phone"]) or 'не указан'}\n"
+        f"✉️ <b>Email:</b> {escape_html(user_data["email"]) or 'не указан'}\n"
+        f"🏙️ <b>Город:</b> {escape_html(user_data["city"]) or 'не указан'}\n"
+        f"\n🆔 <b>Юзернейм:</b> @{escape_html(user_data["username"]) or 'нет'}\n"
         f"📅 <b>Дата регистрации:</b> {created_at_date}\n"
         f"━━━━━━━━━━━━━━━━━\n\n"
         f"🛒 <b>Заказов:</b> {orders_count}"
@@ -146,10 +146,10 @@ async def update_data_callback(callback: CallbackQuery, state: FSMContext):
 
     text = (
         f"📋 <b>Что хотите изменить?</b>\n\n"
-        f"👤 ФИО: {escape_html(existing_user[1]) or 'не указано'}\n"
-        f"📞 Телефон: {escape_html(existing_user[2]) or 'не указан'}\n"
-        f"✉️ Email: {escape_html(existing_user[3]) or 'не указан'}\n"
-        f"🏙️ Город: {escape_html(existing_user[4]) or 'не указан'}\n"
+        f"👤 ФИО: {escape_html(existing_user["fullname"]) or 'не указано'}\n"
+        f"📞 Телефон: {escape_html(existing_user["phone"]) or 'не указан'}\n"
+        f"✉️ Email: {escape_html(existing_user["email"]) or 'не указан'}\n"
+        f"🏙️ Город: {escape_html(existing_user["city"]) or 'не указан'}\n"
     )
     try:
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
@@ -256,10 +256,10 @@ async def update_name(message: Message, state: FSMContext):
         await update_user(
             telegram_id=message.from_user.id,
             fullname=fullname,
-            phone=existing_user[2],
-            email=existing_user[3],
-            city=existing_user[4],
-            address=existing_user[5],
+            phone=existing_user["phone"],
+            email=existing_user["email"],
+            city=existing_user["city"],
+            address=existing_user["address"],
             username=message.from_user.username,
         )
         updated_user = await get_user_by_telegram_id(message.from_user.id)
@@ -284,11 +284,11 @@ async def update_phone(message: Message, state: FSMContext):
     if existing_user:
         await update_user(
             telegram_id=message.from_user.id,
-            fullname=existing_user[1],
+            fullname=existing_user["fullname"],
             phone=phone,
-            email=existing_user[3],
-            city=existing_user[4],
-            address=existing_user[5],
+            email=existing_user["email"],
+            city=existing_user["city"],
+            address=existing_user["address"],
             username=message.from_user.username,
         )
         updated_user = await get_user_by_telegram_id(message.from_user.id)
@@ -318,11 +318,11 @@ async def update_email(message: Message, state: FSMContext):
     if existing_user:
         await update_user(
             telegram_id=message.from_user.id,
-            fullname=existing_user[1],
-            phone=existing_user[2],
+            fullname=existing_user["fullname"],
+            phone=existing_user["phone"],
             email=email,
-            city=existing_user[4],
-            address=existing_user[5],
+            city=existing_user["city"],
+            address=existing_user["address"],
             username=message.from_user.username,
         )
         updated_user = await get_user_by_telegram_id(message.from_user.id)
@@ -347,11 +347,11 @@ async def update_city(message: Message, state: FSMContext):
     if existing_user:
         await update_user(
             telegram_id=message.from_user.id,
-            fullname=existing_user[1],
-            phone=existing_user[2],
-            email=existing_user[3],
+            fullname=existing_user["fullname"],
+            phone=existing_user["phone"],
+            email=existing_user["email"],
             city=city,
-            address=existing_user[5],
+            address=existing_user["address"],
             username=message.from_user.username,
         )
         updated_user = await get_user_by_telegram_id(message.from_user.id)
