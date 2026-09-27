@@ -150,7 +150,7 @@ async def show_users_list(message: Message):
 
     text = "👥 <b>Список пользователей:</b>\n\n"
     for user in users:
-        created_at_raw = user[7] if len(user) > 7 else None
+        created_at_raw = user["created_at"] if len(user) > 7 else None
         if created_at_raw:
             created_at_str = format_moscow_time(created_at_raw)
             created_at_date = created_at_str.split()[0]
@@ -158,14 +158,14 @@ async def show_users_list(message: Message):
             created_at_date = "неизвестно"
 
         text += (
-            f"🔹 <b>{escape_html(user[1])}</b>\n"
-            f"    {escape_html(user[2]) or 'не указан'}\n"
-            f"    {escape_html(user[3]) or 'не указан'}\n"
-            f"   🏙️ {escape_html(user[4]) or 'не указан'}\n"
-            f"   📍 {escape_html(user[5]) or 'не указан'}\n"
-            f"   🆔 @{escape_html(user[6]) or 'нет'}\n"
-            f"   📅 {created_at_date}\n"
-            f"   ─────────────\n"
+            f"🔹<b>{escape_html(user['fullname'])}</b>\n"
+            f"📞{escape_html(user['phone']) or 'не указан'}\n"
+            f"✉︎{escape_html(user['email']) or 'не указан'}\n"
+            f"🏙️ {escape_html(user['city']) or 'не указан'}\n"
+            f"📍 {escape_html(user['address']) or 'не указан'}\n"
+            f"🆔 @{escape_html(user['username']) or 'нет'}\n"
+            f"📅 {created_at_date}\n"
+            f"─────────────\n"
         )
 
     if len(text) > 3500:
@@ -193,8 +193,8 @@ async def show_admins_list(message: Message):
     text = "👑 <b>Список администраторов:</b>\n\n"
     for i, admin_id in enumerate(ADMIN_IDS):
         username = ADMIN_USERNAMES[i] if i < len(ADMIN_USERNAMES) else "неизвестен"
-        text += f"🔹 <b>@{escape_html(username)}</b>\n"
-        text += f"   📌 ID: <code>{admin_id}</code>\n\n"
+        text += f"🔹<b>@{escape_html(username)}</b>\n"
+        text += f"📌 ID: <code>{admin_id}</code>\n\n"
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -324,7 +324,7 @@ async def admin_change_status_callback(callback: CallbackQuery, state: FSMContex
         await callback.answer("Заказ не найден.")
         return
 
-    current_status = order[10] if len(order) > 10 else None
+    current_status = order["status"] if len(order) > 10 else None
 
     if current_status == new_status:
         await callback.answer("ℹ️ Статус уже установлен", show_alert=True)
@@ -354,10 +354,10 @@ async def admin_change_status_callback(callback: CallbackQuery, state: FSMContex
         status_filter = data.get("orders_filter")
         page = data.get("orders_page", 0)
 
-        user_id = order[1]
-        product_name = order[6] or "товар"
-        delivery_method = order[8] or "не указан"
-        delivery_address = order[9] or "не указан"
+        user_id = order["user_id"]
+        product_name = order["name"] or "товар"
+        delivery_method = order["delivery_method"] or "не указан"
+        delivery_address = order["delivery_address"] or "не указан"
 
         # Получаем текст уведомления (он будет разным для движения вперёд и для отката)
         notify_text = get_status_notification_text(
@@ -526,9 +526,9 @@ async def admin_change_status_menu(callback: CallbackQuery, state: FSMContext):
 
     text = (
         f"🔄 <b>Изменение статуса заказа #{order_id}</b>\n\n"
-        f"👤 Клиент: {escape_html(order[2] or 'не указан')}\n"
-        f"🛒 Товар: {escape_html(order[6] or 'не указан')}\n"
-        f"📌 Текущий статус: {order[10] or 'новый'}\n\n"
+        f"👤 Клиент: {escape_html(order['order_fullname'] or 'не указан')}\n"
+        f"🛒 Товар: {escape_html(order['name'] or 'не указан')}\n"
+        f"📌 Текущий статус: {order['status'] or 'новый'}\n\n"
         f"Выберите новый статус:"
     )
 
@@ -576,14 +576,14 @@ async def confirm_cancel_callback(callback: CallbackQuery, state: FSMContext):
         ]
     )
 
-    unit_price = order[13] if len(order) > 13 and order[13] else 0
-    quantity = order[7] or 0
+    unit_price = order["unit_price"] if len(order) > 13 and order["unit_price"] else 0
+    quantity = order["quantity"] or 0
     total_price = quantity * unit_price
 
     text = (
         f"⚠️ <b>Подтверждение отмены заказа #{order_id}</b>\n\n"
-        f"👤 Клиент: {escape_html(order[2] or 'не указан')}\n"
-        f"🛒 Товар: {escape_html(order[6] or 'не указан')}\n"
+        f"👤 Клиент: {escape_html(order['order_fullname'] or 'не указан')}\n"
+        f"🛒 Товар: {escape_html(order['name'] or 'не указан')}\n"
         f"📦 Количество: {quantity} шт.\n"
         f"💰 Цена за шт.: {unit_price} ₽\n"
         f"💵 Сумма: {total_price} ₽\n"
@@ -656,7 +656,7 @@ async def process_tracking_number(message: Message, state: FSMContext):
         await update_order_tracking_number(order_id, tracking_number)
 
         order = await get_order_by_id(order_id)
-        user_id = order[1] if order else None
+        user_id = order["user_id"] if order else None
 
         notification_sent = False
         if user_id:
@@ -777,27 +777,27 @@ async def export_orders_csv(message: Message):
     )
 
     for order in orders:
-        quantity = order[7] or 0
-        unit_price = order[13] if len(order) > 13 and order[13] else 0
+        quantity = order["quantity"] or 0
+        unit_price = order["unit_price"] if len(order) > 13 and order["unit_price"] else 0
         total_price = quantity * unit_price
 
         writer.writerow(
             [
-                order[0],
-                order[1] or "",
-                order[2] or "",
-                order[3] or "",
-                order[4] or "",
-                order[6] or "",
+                order["id"],
+                order["order_fullname"] or "",
+                order["order_phone"] or "",
+                order["email"] or "",
+                order["city"] or "",
+                order["name"] or "",
                 quantity,
                 unit_price,
                 total_price,
-                order[8] or "",
-                order[9] or "",
-                order[14] or "",
-                order[10] or "",
-                order[11] or "",
-                order[12] or "",
+                order["delivery_method"] or "",
+                order["delivery_address"] or "",
+                order["comment"] or "",
+                order["status"] or "",
+                order["created_at"] or "",
+                order["tracking_number"] or "",
             ]
         )
 
@@ -854,20 +854,20 @@ async def show_orders_list(message: Message, state: FSMContext, status_filter: s
         None: "📋 Все заказы",
     }
     title = filter_names.get(status_filter, "📋 Все заказы")
-    text = f"{title}\n━━━━━━━━━━━━━━━━━━━━━\n"
+    text = f"{title}\n━━━━━━━━━━━━━\n"
 
     keyboard_rows = []
     status_emoji = {"новый": "🆕", "в обработке": "🔄", "отправлен": "📦", "доставлен": "✅", "отменён": "❌"}
 
     for order in orders:
         # Явное присвоение переменных (формат get_orders_paginated)
-        o_id = order[0]
-        fullname = order[1] or "Неизвестно"
-        product_name = order[5] or "Товар"
-        quantity = order[6] or 0
-        unit_price = order[13] or 0
+        o_id = order["id"]
+        fullname = order["order_fullname"] or "Неизвестно"
+        product_name = order["name"] or "Товар"
+        quantity = order["quantity"] or 0
+        unit_price = order["unit_price"] or 0
         total_price = quantity * unit_price
-        status = order[9] or "новый"
+        status = order["status"] or "новый"
     
         emoji = status_emoji.get(status, "📌")
     
@@ -880,7 +880,7 @@ async def show_orders_list(message: Message, state: FSMContext, status_filter: s
         # Для текста: используем полное название
         full_name = product_name
     
-        text += f"{emoji} <b>#{o_id}</b> — {escape_html(fullname)} — {escape_html(full_name)} — {total_price} ₽\n"
+        text += f"{emoji} <b>#{o_id}</b> — {escape_html(fullname)} — {escape_html(full_name)} — {total_price} ₽\n\n"
     
         # Уникальная кнопка для каждого заказа
         button_text = f"{emoji} #{o_id} — {escape_html(short_name)}"
@@ -888,7 +888,7 @@ async def show_orders_list(message: Message, state: FSMContext, status_filter: s
             InlineKeyboardButton(text=button_text, callback_data=f"view_order_detail_{o_id}")
         ])
 
-    text += f"━━━━━━━━━━━━━━━━━━━━━\nСтраница {page + 1} из {total_pages}"
+    text += f"━━━━━━━━━━━━━\nСтраница {page + 1} из {total_pages}"
 
     # Фильтры
     keyboard_rows.append([
@@ -990,8 +990,8 @@ async def clear_tracking_callback(callback: CallbackQuery, state: FSMContext):
     order_id = int(callback.data.split("_")[2])
     order = await get_order_by_id(order_id)
     
-    # order[12] — это tracking_number в get_order_by_id
-    if not order or not order[12]:
+    # order["tracking_number"] — это tracking_number в get_order_by_id
+    if not order or not order["tracking_number"]:
         await callback.answer("ℹ️ У этого заказа уже нет трек-номера.", show_alert=True)
         return
 
@@ -1005,7 +1005,7 @@ async def clear_tracking_callback(callback: CallbackQuery, state: FSMContext):
     text = (
         f"🗑 <b>Подтвердите очистку трек-номера</b>\n\n"
         f"Заказ #{order_id}\n"
-        f"Текущий трек-номер: <code>{escape_html(order[12])}</code>\n\n"
+        f"Текущий трек-номер: <code>{escape_html(order['tracking_number'])}</code>\n\n"
         f"Вы уверены, что хотите удалить его?"
     )
     
@@ -1039,7 +1039,7 @@ async def confirm_clear_tracking_callback(callback: CallbackQuery, state: FSMCon
     
     # 1. Получаем user_id для уведомления
     order = await get_order_by_id(order_id)
-    user_id = order[1] if order else None
+    user_id = order["user_id"] if order else None
 
     # 2. Очищаем трек-номер в БД
     await clear_order_tracking_number(order_id)
@@ -1102,21 +1102,21 @@ async def show_order_detail(message: Message, state: FSMContext, order_id: int):
         return
 
     # Явное присвоение переменных для избежания магических индексов (формат get_order_by_id)
-    o_id = order[0]
-    fullname = order[2] or "не указан"
-    phone = order[3] or "не указан"
-    email = order[4] or "не указан"
-    city = order[5] or "не указан"
-    product_name = order[6] or "не указан"
-    quantity = order[7] or 0
-    delivery_method = order[8] or "не указан"
-    delivery_address = order[9] or "не указан"
-    status = order[10] or "новый"
-    created_at = order[11]
-    tracking_number = order[12]
-    unit_price = order[13] or 0
-    comment = order[14]
-    product_id = order[15]
+    o_id = order["id"]
+    fullname = order["order_fullname"] or "не указан"
+    phone = order["order_phone"] or "не указан"
+    email = order["email"] or "не указан"
+    city = order["city"] or "не указан"
+    product_name = order["name"] or "не указан"
+    quantity = order["quantity"] or 0
+    delivery_method = order["delivery_method"] or "не указан"
+    delivery_address = order["delivery_address"] or "не указан"
+    status = order["status"] or "новый"
+    created_at = order["created_at"]
+    tracking_number = order["tracking_number"]
+    unit_price = order["unit_price"] or 0
+    comment = order["comment"]
+    product_id = order["product_id"]
 
     total_price = quantity * unit_price
 
@@ -1127,7 +1127,7 @@ async def show_order_detail(message: Message, state: FSMContext, order_id: int):
 
     text = (
         f"{emoji} <b>Заказ #{o_id}</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"━━━━━━━━━━━━━\n"
         f"👤 <b>Клиент:</b> {escape_html(fullname)}\n"
         f"📞 <b>Телефон:</b> {escape_html(phone)}\n"
         f"📧 <b>Email:</b> {escape_html(email)}\n"
@@ -1148,7 +1148,7 @@ async def show_order_detail(message: Message, state: FSMContext, order_id: int):
     text += (
         f"📌 <b>Статус:</b> {status}\n"
         f"📅 <b>Создан:</b> {format_moscow_time(created_at)}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"━━━━━━━━━━━━━\n"
     )
 
     # Формирование клавиатуры
@@ -1168,7 +1168,7 @@ async def show_order_detail(message: Message, state: FSMContext, order_id: int):
     if product_id:
         product = await get_product_by_id(product_id)
         if product and len(product) > 7:
-            product_image = product[7]
+            product_image = product["image_file_id"]
 
     try:
         if product_image:
