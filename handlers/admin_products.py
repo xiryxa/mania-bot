@@ -25,7 +25,7 @@ from db import (
     CAPTION_LIMIT,
     visible_len,
     truncate_plain
-) 
+)
 from filters import IsAdmin
 from forms.users import AdminProductEditState, AdminProductState
 from config import CATEGORY_MAP
@@ -164,7 +164,7 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
         inline_keyboard=[
             nav_buttons if nav_buttons else [],
             [
-                InlineKeyboardButton(text="️✏️ Редактировать", callback_data=f"edit_select_{product['id']}"),
+                InlineKeyboardButton(text="️✏️ Редактировать", callback_data=f"edit_select_{product['id']}_list_{page}"),
                 InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"delete_confirm_{product['id']}"),
             ],
             [
@@ -259,14 +259,14 @@ async def show_admin_product_text(message: Message, state: FSMContext, page: int
     """Показать страницу текстового списка товаров (8 товаров на страницу)"""
     data = await state.get_data()
     products = data.get("admin_products", [])
-    
+
     if not products:
         await message.answer("❌ Товары не найдены.")
         return
 
     items_per_page = 8
     total_pages = (len(products) + items_per_page - 1) // items_per_page
-    
+
     start_idx = page * items_per_page
     end_idx = min(start_idx + items_per_page, len(products))
     page_products = products[start_idx:end_idx]
@@ -600,7 +600,14 @@ async def product_edit_start(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("edit_select_"), IsAdmin())
 async def product_edit_select(callback: CallbackQuery, state: FSMContext):
     """Выбор товара для редактирования"""
-    product_id = int(callback.data.split("_")[2])
+    parts = callback.data.split("_")
+    product_id = int(parts[2])
+
+    if len(parts) > 3 and parts[3] == "list":
+        return_callback = f"product_page_admin_{parts[4]}"
+    else:
+        return_callback = "product_edit"
+
     product = await get_product_by_id(product_id)
 
     if not product:
@@ -608,7 +615,10 @@ async def product_edit_select(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    await state.update_data(editing_product_id=product_id)
+    await state.update_data(
+        editing_product_id=product_id,
+        edit_return_callback=return_callback
+    )
     await state.set_state(AdminProductState.editing_field)
 
     # Безопасный caption: описание обрезается с учётом бюджета каркаса
@@ -638,7 +648,7 @@ async def product_edit_select(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="🏷️ Категория", callback_data="edit_field_category")],
             [InlineKeyboardButton(text="📦 Количество", callback_data="edit_field_quantity")],
             [InlineKeyboardButton(text="📷 Изменить фото", callback_data="edit_field_photo")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="product_edit")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=return_callback)],
         ]
     )
 
@@ -683,20 +693,56 @@ async def edit_field_photo(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(AdminProductEditState.photo)
 
+    data = await state.get_data()
+    product_id = data.get("editing_product_id")
+    product = await get_product_by_id(product_id)
+    edit_bot_message_id = data.get("edit_bot_message_id")
+
+    text = (
+        "📷 <b>Редактирование фото</b>\n\n"
+        "Отправьте новое фото для товара."
+    )
+
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⏭ Пропустить (оставить текущее)", callback_data="edit_photo_skip")],
-            [InlineKeyboardButton(text="⬅️ Назад к редактированию", callback_data="edit_photo_cancel")],
+            [InlineKeyboardButton(text="⬅️ Назад к редактированию", callback_data="edit_photo_back")]
         ]
     )
 
-    await safe_edit(
-        callback,
-        "📷 <b>Редактирование фото</b>\n\n"
-        "Отправьте новое фото для товара.\n"
-        "Или нажмите «Пропустить», чтобы оставить текущее фото.",
-        keyboard,
-    )
+    if product and product['image_file_id'] and edit_bot_message_id:
+        try:
+            await callback.bot.edit_message_media(
+                chat_id=callback.message.chat.id,
+                message_id=edit_bot_message_id,
+                media=InputMediaPhoto(
+                    media=product['image_file_id'],
+                    caption=text,
+                    parse_mode=ParseMode.HTML,
+                ),
+                reply_markup=keyboard,
+            )
+        except Exception as e:
+            error_text = str(e).lower()
+            if "message is not modified" in error_text:
+                return
+            logger.warning(f"edit_field_photo: edit_message_media failed: {e}, sending new photo")
+            try:
+                await callback.bot.delete_message(
+                    chat_id=callback.message.chat.id,
+                    message_id=edit_bot_message_id,
+                )
+            except Exception:
+                pass
+            new_msg = await callback.message.answer_photo(
+                photo=product['image_file_id'],
+                caption=text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML,
+            )
+            await state.update_data(edit_bot_message_id=new_msg.message_id)
+    else:
+        await render_admin_banner(callback.message, text, keyboard)
+        await state.update_data(edit_bot_message_id=callback.message.message_id)
 
 
 @router.callback_query(F.data == "edit_photo_skip", IsAdmin())
@@ -767,24 +813,176 @@ async def edit_photo_process(message: Message, state: FSMContext):
     """Обновление фото товара"""
     data = await state.get_data()
     product_id = data.get("editing_product_id")
+    edit_bot_message_id = data.get("edit_bot_message_id")
+
     if not product_id:
         await message.answer("❌ Ошибка: товар не найден.")
         await state.clear()
         return
+
     image_file_id = message.photo[-1].file_id
+
     try:
         await update_product_image(product_id, image_file_id)
-        await state.clear()
-        await message.answer("✅ <b>Фото товара обновлено!</b>", parse_mode=ParseMode.HTML)
-        products = await get_all_products()
-        if products:
-            await state.update_data(admin_products=products, admin_page=0, admin_last_photo_message_id=None)
-            await show_admin_product(message, state, 0)
+
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
+        await state.set_state(AdminProductState.editing_field)
+
+        product = await get_product_by_id(product_id)
+
+        head = (
+            f"✏️ <b>Редактирование товара</b>\n"
+            f"━━━━━━━━━━━━━━━━━\n\n"
+            f"🆔 ID: <code>{product['id']}</code>\n"
+            f"📌 <b>Название:</b> {escape_html(product['name'])}\n"
+            f"📝 <b>Описание:</b> "
+        )
+        tail = (
+            f"\n💰 <b>Цена:</b> {product['price']} ₽\n"
+            f"🏷️ <b>Категория:</b> {escape_html(product['category'])}\n"
+            f"📦 <b>В наличии:</b> {product['quantity']} шт.\n"
+            f"📷 <b>Фото:</b> ✅ есть\n\n"
+            f"✅ <b>Фото обновлено!</b>\n\n"
+            f"Выберите поле для изменения:"
+        )
+
+        budget = CAPTION_LIMIT - visible_len(head + tail) - 4
+        text = head + escape_html(truncate_plain(product['description'], budget)) + tail
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="📝 Название", callback_data="edit_field_name")],
+                [InlineKeyboardButton(text="📝 Описание", callback_data="edit_field_description")],
+                [InlineKeyboardButton(text="💰 Цена", callback_data="edit_field_price")],
+                [InlineKeyboardButton(text="🏷️ Категория", callback_data="edit_field_category")],
+                [InlineKeyboardButton(text="📦 Количество", callback_data="edit_field_quantity")],
+                [InlineKeyboardButton(text="📷 Изменить фото", callback_data="edit_field_photo")],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data=data.get("edit_return_callback", "product_edit"))],
+            ]
+        )
+
+        if edit_bot_message_id:
+            try:
+                await message.bot.edit_message_media(
+                    chat_id=message.chat.id,
+                    message_id=edit_bot_message_id,
+                    media=InputMediaPhoto(
+                        media=image_file_id,
+                        caption=text,
+                        parse_mode=ParseMode.HTML,
+                    ),
+                    reply_markup=keyboard,
+                )
+            except Exception as e:
+                error_text = str(e).lower()
+                if "message is not modified" in error_text:
+                    pass
+                else:
+                    logger.warning(f"edit_photo_process: edit_message_media failed: {e}, sending new photo")
+                    try:
+                        await message.bot.delete_message(
+                            chat_id=message.chat.id,
+                            message_id=edit_bot_message_id,
+                        )
+                    except Exception:
+                        pass
+                    new_msg = await message.answer_photo(
+                        photo=image_file_id,
+                        caption=text,
+                        reply_markup=keyboard,
+                        parse_mode=ParseMode.HTML,
+                    )
+                    await state.update_data(edit_bot_message_id=new_msg.message_id)
         else:
-            await admin_products_menu(message, state)
+            await render_admin_banner(message, text, keyboard)
+
     except Exception as e:
         logger.error(f"Error updating product photo: {e}", exc_info=True)
         await message.answer("❌ Ошибка при обновлении фото. Попробуйте позже.", parse_mode=ParseMode.HTML)
+
+
+@router.callback_query(StateFilter(AdminProductEditState.photo), F.data == "edit_photo_back", IsAdmin())
+async def edit_photo_back(callback: CallbackQuery, state: FSMContext):
+    """Возврат к редактированию товара из состояния изменения фото"""
+    await callback.answer()
+
+    data = await state.get_data()
+    product_id = data.get("editing_product_id")
+    edit_bot_message_id = data.get("edit_bot_message_id")
+    return_callback = data.get("edit_return_callback", "product_edit")
+
+    await state.set_state(AdminProductState.editing_field)
+
+    product = await get_product_by_id(product_id)
+
+    head = (
+        f"✏️ <b>Редактирование товара</b>\n"
+        f"━━━━━━━━━━━━━━━━━\n\n"
+        f"🆔 ID: <code>{product['id']}</code>\n"
+        f"📌 <b>Название:</b> {escape_html(product['name'])}\n"
+        f"📝 <b>Описание:</b> "
+    )
+    tail = (
+        f"\n💰 <b>Цена:</b> {product['price']} ₽\n"
+        f"🏷️ <b>Категория:</b> {escape_html(product['category'])}\n"
+        f"📦 <b>В наличии:</b> {product['quantity']} шт.\n"
+        f"📷 <b>Фото:</b> {'✅ есть' if product['image_file_id'] else '❌ нет'}\n\n"
+        f"Выберите поле для изменения:"
+    )
+
+    budget = CAPTION_LIMIT - visible_len(head + tail) - 4
+    text = head + escape_html(truncate_plain(product['description'], budget)) + tail
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📝 Название", callback_data="edit_field_name")],
+            [InlineKeyboardButton(text="📝 Описание", callback_data="edit_field_description")],
+            [InlineKeyboardButton(text="💰 Цена", callback_data="edit_field_price")],
+            [InlineKeyboardButton(text="🏷️ Категория", callback_data="edit_field_category")],
+            [InlineKeyboardButton(text="📦 Количество", callback_data="edit_field_quantity")],
+            [InlineKeyboardButton(text="📷 Изменить фото", callback_data="edit_field_photo")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=return_callback)],
+        ]
+    )
+
+    if product['image_file_id'] and edit_bot_message_id:
+        try:
+            await callback.bot.edit_message_media(
+                chat_id=callback.message.chat.id,
+                message_id=edit_bot_message_id,
+                media=InputMediaPhoto(
+                    media=product['image_file_id'],
+                    caption=text,
+                    parse_mode=ParseMode.HTML,
+                ),
+                reply_markup=keyboard,
+            )
+        except Exception as e:
+            error_text = str(e).lower()
+            if "message is not modified" in error_text:
+                return
+            logger.warning(f"edit_photo_back: edit_message_media failed: {e}, sending new photo")
+            try:
+                await callback.bot.delete_message(
+                    chat_id=callback.message.chat.id,
+                    message_id=edit_bot_message_id,
+                )
+            except Exception:
+                pass
+            new_msg = await callback.message.answer_photo(
+                photo=product['image_file_id'],
+                caption=text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML,
+            )
+            await state.update_data(edit_bot_message_id=new_msg.message_id)
+    else:
+        await render_admin_banner(callback.message, text, keyboard)
+        await state.update_data(edit_bot_message_id=callback.message.message_id)
 
 
 @router.message(StateFilter(AdminProductEditState.photo))
@@ -806,48 +1004,74 @@ async def edit_photo_invalid(message: Message, state: FSMContext):
 async def product_edit_field(callback: CallbackQuery, state: FSMContext):
     """Выбор поля для редактирования"""
     field = callback.data.split("_")[2]
-    
-    # Если это категория, показываем кнопки выбора, чтобы избежать ошибок ввода
+
+    data = await state.get_data()
+    product_id = data.get("editing_product_id")
+    product = await get_product_by_id(product_id) if product_id else None
+
     if field == "category":
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="🦆 Гусь", callback_data="edit_category_goose")],
                 [InlineKeyboardButton(text="🦆 Утка", callback_data="edit_category_duck")],
-                [InlineKeyboardButton(text="⬅️ Отмена", callback_data="product_edit")],
+                [InlineKeyboardButton(text="⬅️ Отмена", callback_data=f"edit_select_{product_id}")],
             ]
         )
-        await safe_edit(
-            callback,
-            "🏷️ <b>Выберите новую категорию товара:</b>",
-            keyboard,
+        text = "🏷️ <b>Выберите новую категорию товара:</b>"
+    else:
+        field_names = {
+            "name": "название",
+            "description": "описание",
+            "price": "цену",
+            "quantity": "количество",
+        }
+        await state.update_data(editing_field=field)
+        await state.set_state(AdminProductState.editing_value)
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Отмена", callback_data=f"edit_select_{product_id}")]
+            ]
         )
-        await callback.answer()
-        return
+        text = f"✏️ Введите новое <b>{field_names.get(field, field)}</b>:"
 
-    field_names = {
-        "name": "название",
-        "description": "описание",
-        "price": "цену",
-        "quantity": "количество",
-    }
+    if product and product['image_file_id']:
+        try:
+            await callback.bot.edit_message_media(
+                chat_id=callback.message.chat.id,
+                message_id=callback.message.message_id,
+                media=InputMediaPhoto(
+                    media=product['image_file_id'],
+                    caption=text,
+                    parse_mode=ParseMode.HTML,
+                ),
+                reply_markup=keyboard,
+            )
+            await state.update_data(edit_bot_message_id=callback.message.message_id)
+        except Exception as e:
+            error_text = str(e).lower()
+            if "message is not modified" in error_text:
+                await callback.answer()
+                return
+            logger.warning(f"product_edit_field: edit_message_media failed: {e}, sending new photo")
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            new_msg = await callback.message.answer_photo(
+                photo=product['image_file_id'],
+                caption=text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML,
+            )
+            await state.update_data(edit_bot_message_id=new_msg.message_id)
+    else:
+        await render_admin_banner(callback.message, text, keyboard)
+        await state.update_data(edit_bot_message_id=callback.message.message_id)
 
-    await state.update_data(editing_field=field)
-    await state.set_state(AdminProductState.editing_value)
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="product_edit")]
-        ]
-    )
-
-    await safe_edit(
-        callback,
-        f"✏️ Введите новое <b>{field_names.get(field, field)}</b>:",
-        keyboard,
-    )
     await callback.answer()
-    
-    
+
+
 @router.callback_query(
     StateFilter(AdminProductState.editing_field),
     F.data.startswith("edit_category_"),
@@ -859,6 +1083,7 @@ async def product_edit_category_select(callback: CallbackQuery, state: FSMContex
     new_category = CATEGORY_MAP.get(key, key)
     data = await state.get_data()
     product_id = data.get("editing_product_id")
+    return_callback = data.get("edit_return_callback", "product_edit")
     if not product_id:
         await callback.answer("❌ Ошибка: товар не найден.")
         return
@@ -877,27 +1102,70 @@ async def product_edit_category_select(callback: CallbackQuery, state: FSMContex
             ozon_url=product['ozon_url'],
             image_file_id=product['image_file_id'],
         )
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
         await state.set_state(AdminProductState.editing_field)
-        text = (
-            f"✅ <b>Категория товара обновлена!</b>\n\n"
-            f"🔹 <b>{escape_html(product['name'])}</b>\n"
-            f"🏷️ Новая категория: {escape_html(new_category)}\n\n"
-            f"Выберите дальнейшее действие:"
+        head = (
+            f"✏️ <b>Редактирование товара</b>\n"
+            f"━━━━━━━━━━━━━━━━━\n\n"
+            f"🆔 ID: <code>{product['id']}</code>\n"
+            f"📌 <b>Название:</b> {escape_html(product['name'])}\n"
+            f"📝 <b>Описание:</b> "
         )
+        tail = (
+            f"\n💰 <b>Цена:</b> {product['price']} ₽\n"
+            f"🏷️ <b>Категория:</b> {escape_html(new_category)}\n"
+            f"📦 <b>В наличии:</b> {product['quantity']} шт.\n"
+            f"📷 <b>Фото:</b> {'✅ есть' if product['image_file_id'] else '❌ нет'}\n\n"
+            f"Выберите поле для изменения:"
+        )
+
+        budget = CAPTION_LIMIT - visible_len(head + tail) - 4
+        text = head + escape_html(truncate_plain(product['description'], budget)) + tail
+
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="✏️ Продолжить редактирование", callback_data=f"edit_select_{product_id}")],
-                [InlineKeyboardButton(text="📦 В управление товарами", callback_data="admin_products")],
+                [InlineKeyboardButton(text="📝 Название", callback_data="edit_field_name")],
+                [InlineKeyboardButton(text="📝 Описание", callback_data="edit_field_description")],
+                [InlineKeyboardButton(text="💰 Цена", callback_data="edit_field_price")],
+                [InlineKeyboardButton(text="🏷️ Категория", callback_data="edit_field_category")],
+                [InlineKeyboardButton(text="📦 Количество", callback_data="edit_field_quantity")],
+                [InlineKeyboardButton(text="📷 Изменить фото", callback_data="edit_field_photo")],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data=return_callback)],
             ]
         )
-        await callback.message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+        if product['image_file_id']:
+            try:
+                await callback.bot.edit_message_media(
+                    chat_id=callback.message.chat.id,
+                    message_id=callback.message.message_id,
+                    media=InputMediaPhoto(
+                        media=product['image_file_id'],
+                        caption=text,
+                        parse_mode=ParseMode.HTML,
+                    ),
+                    reply_markup=keyboard,
+                )
+            except Exception as e:
+                error_text = str(e).lower()
+                if "message is not modified" in error_text:
+                    await callback.answer("✅ Категория обновлена!")
+                    return
+                logger.warning(f"product_edit_category_select: edit_message_media failed: {e}, sending new photo")
+                try:
+                    await callback.message.delete()
+                except Exception:
+                    pass
+                await callback.message.answer_photo(
+                    photo=product['image_file_id'],
+                    caption=text,
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.HTML,
+                )
+        else:
+            await render_admin_banner(callback.message, text, keyboard)
+        await callback.answer("✅ Категория обновлена!")
     except Exception as e:
         logger.error(f"Error updating product category: {e}", exc_info=True)
-        await callback.answer("❌ Ошибка при обновлении категории.", show_alert=True)
 
 
 @router.message(StateFilter(AdminProductState.editing_value), F.text)
@@ -906,6 +1174,7 @@ async def product_edit_value(message: Message, state: FSMContext):
     data = await state.get_data()
     product_id = data.get("editing_product_id")
     field = data.get("editing_field")
+    edit_bot_message_id = data.get("edit_bot_message_id")
 
     if not product_id or not field:
         await message.answer("❌ Ошибка. Попробуйте снова.")
@@ -921,7 +1190,7 @@ async def product_edit_value(message: Message, state: FSMContext):
         return
 
     try:
-        current_image = product['image_file_id'] if product and 'image_file_id' in product else None
+        current_image = product['image_file_id']
 
         update_data = {
             "name": product['name'],
@@ -959,7 +1228,6 @@ async def product_edit_value(message: Message, state: FSMContext):
                 return
             update_data["category"] = value
 
-        # Вызываем update_product и получаем результат с флагом restocked
         result = await update_product(
             product_id=product_id,
             name=update_data["name"],
@@ -971,36 +1239,120 @@ async def product_edit_value(message: Message, state: FSMContext):
             image_file_id=update_data["image_file_id"],
         )
 
-        if result.get("success"):
-            await message.answer(
-                f"✅ <b>Товар обновлён!</b>\n\n"
-                f"🔹 <b>{escape_html(update_data['name'])}</b>\n"
-                f"💰 {update_data['price']} ₽\n"
-                f"🏷️ {escape_html(update_data['category'])}\n"
-                f"📦 В наличии: {update_data['quantity']} шт.",
-                parse_mode=ParseMode.HTML,
-            )
+        try:
+            await message.delete()
+        except Exception:
+            pass
 
-            # === Уведомление о появлении товара в наличии (Шаг 3) ===
+        if result.get("success"):
             if result.get("restocked") and result.get("product_id"):
                 from utils.notifications import notify_back_in_stock
                 await notify_back_in_stock(result["product_id"], message.bot)
-            # ========================================================
 
-            await state.clear()
-            await state.set_state(AdminProductState.selecting_action)
+            await state.set_state(AdminProductState.editing_field)
+
+            field_names = {
+                "name": "Название",
+                "description": "Описание",
+                "price": "Цена",
+                "quantity": "Количество",
+                "category": "Категория",
+            }
+            field_ru = field_names.get(field, field)
+
+            head = (
+                f"✏️ <b>Редактирование товара</b>\n"
+                f"━━━━━━━━━━━━━━━━━\n\n"
+                f"🆔 ID: <code>{product['id']}</code>\n"
+                f"📌 <b>Название:</b> {escape_html(update_data['name'])}\n"
+                f"📝 <b>Описание:</b> "
+            )
+            tail = (
+                f"\n💰 <b>Цена:</b> {update_data['price']} ₽\n"
+                f"🏷️ <b>Категория:</b> {escape_html(update_data['category'])}\n"
+                f"📦 <b>В наличии:</b> {update_data['quantity']} шт.\n"
+                f"📷 <b>Фото:</b> {'✅ есть' if current_image else '❌ нет'}\n\n"
+                f"✅ <b>{field_ru} обновлено!</b>\n\n"
+                f"Выберите поле для изменения:"
+            )
+
+            budget = CAPTION_LIMIT - visible_len(head + tail) - 4
+            text = head + escape_html(truncate_plain(update_data['description'], budget)) + tail
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="📦 Продолжить управление", callback_data="admin_products")],
-                    [InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="admin_back_to_panel")],
+                    [InlineKeyboardButton(text="📝 Название", callback_data="edit_field_name")],
+                    [InlineKeyboardButton(text="📝 Описание", callback_data="edit_field_description")],
+                    [InlineKeyboardButton(text="💰 Цена", callback_data="edit_field_price")],
+                    [InlineKeyboardButton(text="🏷️ Категория", callback_data="edit_field_category")],
+                    [InlineKeyboardButton(text="📦 Количество", callback_data="edit_field_quantity")],
+                    [InlineKeyboardButton(text="📷 Изменить фото", callback_data="edit_field_photo")],
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"product_page_admin_{data.get('admin_page', 0)}" if data.get('edit_return_callback', '').startswith('product_page_admin_') else "product_edit")],
                 ]
             )
-            await message.answer(
-                "Выберите дальнейшее действие:",
-                reply_markup=keyboard,
-                parse_mode=ParseMode.HTML,
-            )
+
+            if edit_bot_message_id and current_image:
+                try:
+                    await message.bot.edit_message_media(
+                        chat_id=message.chat.id,
+                        message_id=edit_bot_message_id,
+                        media=InputMediaPhoto(
+                            media=current_image,
+                            caption=text,
+                            parse_mode=ParseMode.HTML,
+                        ),
+                        reply_markup=keyboard,
+                    )
+                except Exception as e:
+                    error_text = str(e).lower()
+                    if "message is not modified" in error_text:
+                        pass
+                    else:
+                        logger.warning(f"product_edit_value: edit_message_media failed: {e}, sending new photo")
+                        try:
+                            await message.bot.delete_message(
+                                chat_id=message.chat.id,
+                                message_id=edit_bot_message_id,
+                            )
+                        except Exception:
+                            pass
+                        new_msg = await message.answer_photo(
+                            photo=current_image,
+                            caption=text,
+                            reply_markup=keyboard,
+                            parse_mode=ParseMode.HTML,
+                        )
+                        await state.update_data(edit_bot_message_id=new_msg.message_id)
+            elif edit_bot_message_id:
+                try:
+                    await message.bot.edit_message_text(
+                        chat_id=message.chat.id,
+                        message_id=edit_bot_message_id,
+                        text=text,
+                        reply_markup=keyboard,
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception as e:
+                    error_text = str(e).lower()
+                    if "message is not modified" in error_text:
+                        pass
+                    else:
+                        logger.warning(f"product_edit_value: edit_message_text failed: {e}, sending new")
+                        try:
+                            await message.bot.delete_message(
+                                chat_id=message.chat.id,
+                                message_id=edit_bot_message_id,
+                            )
+                        except Exception:
+                            pass
+                        new_msg = await message.answer(
+                            text=text,
+                            reply_markup=keyboard,
+                            parse_mode=ParseMode.HTML,
+                        )
+                        await state.update_data(edit_bot_message_id=new_msg.message_id)
+            else:
+                await render_admin_banner(message, text, keyboard)
         else:
             await message.answer("❌ Ошибка при обновлении товара.")
 
