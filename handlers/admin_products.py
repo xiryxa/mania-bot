@@ -209,15 +209,8 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
                 pass
             return
 
-    # Если фото нет — текстовый вариант
-    try:
-        await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    except Exception:
-        try:
-            await message.delete()
-        except Exception:
-            pass
-        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    # Если фото нет — используем баннер
+    await render_admin_banner(message, text, keyboard)
 
 
 @router.callback_query(F.data.startswith("product_page_admin_"), IsAdmin())
@@ -665,6 +658,7 @@ async def product_edit_select(callback: CallbackQuery, state: FSMContext):
                 ),
                 reply_markup=keyboard,
             )
+            await state.update_data(edit_bot_message_id=callback.message.message_id)
         except Exception as e:
             error_text = str(e).lower()
             if "message is not modified" in error_text:
@@ -675,14 +669,17 @@ async def product_edit_select(callback: CallbackQuery, state: FSMContext):
                 await callback.message.delete()
             except Exception:
                 pass
-            await callback.message.answer_photo(
+            new_msg = await callback.message.answer_photo(
                 photo=product['image_file_id'],
                 caption=text,
                 reply_markup=keyboard,
                 parse_mode=ParseMode.HTML,
             )
+            await state.update_data(edit_bot_message_id=new_msg.message_id)
     else:
         await render_admin_banner(callback.message, text, keyboard)
+        await state.update_data(edit_bot_message_id=callback.message.message_id)
+
     await callback.answer()
 
 
@@ -988,9 +985,12 @@ async def edit_photo_back(callback: CallbackQuery, state: FSMContext):
 @router.message(StateFilter(AdminProductEditState.photo))
 async def edit_photo_invalid(message: Message, state: FSMContext):
     """Обработка не-фото в состоянии редактирования фото"""
+    try:
+        await message.delete()
+    except Exception:
+        pass
     await message.answer(
-        "❌ Пожалуйста, отправьте <b>фото</b> для товара.\n"
-        "Или нажмите кнопку «Пропустить», чтобы оставить текущее фото.",
+        "❌ Пожалуйста, отправьте <u><b>фото</b></u> для товара.",
         parse_mode=ParseMode.HTML,
     )
 
