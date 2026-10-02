@@ -1616,14 +1616,14 @@ async def show_deleted_product(message: Message, state: FSMContext, page: int):
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"deleted_page_{page - 1}"))
-    nav_buttons.append(InlineKeyboardButton(text=f"{page + 1}/{total}", callback_data="deleted_page_info"))
+    nav_buttons.append(InlineKeyboardButton(text=f"{page + 1}/{total}", callback_data="deleted_info_btn"))
     if page < total - 1:
         nav_buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"deleted_page_{page + 1}"))
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             nav_buttons if nav_buttons else [],
-            [InlineKeyboardButton(text="♻️ Восстановить", callback_data=f"restore_confirm_{product['id']}")],
+            [InlineKeyboardButton(text="♻️ Восстановить", callback_data=f"restore_confirm_{product['id']}_from_list_{page}")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_products")],
         ]
     )
@@ -1675,7 +1675,7 @@ async def deleted_page_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data == "deleted_page_info", IsAdmin())
+@router.callback_query(F.data == "deleted_info_btn", IsAdmin())
 async def deleted_page_info(callback: CallbackQuery):
     """Информация о странице удалённых товаров"""
     await callback.answer("Страница удалённых товаров", show_alert=True)
@@ -1684,7 +1684,16 @@ async def deleted_page_info(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("restore_confirm_"), IsAdmin())
 async def restore_confirm(callback: CallbackQuery, state: FSMContext):
     """Подтверждение восстановления товара"""
-    product_id = int(callback.data.split("_")[2])
+    parts = callback.data.split("_")
+    product_id = int(parts[2])
+
+    # Определяем контекст возврата
+    if len(parts) > 3 and parts[3] == "from" and parts[4] == "list":
+        page = int(parts[5])
+        return_callback = f"deleted_page_{page}"
+    else:
+        return_callback = "deleted_products_list"
+
     product = await get_product_by_id(product_id)
 
     if not product:
@@ -1692,10 +1701,13 @@ async def restore_confirm(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
+    # Сохраняем контекст возврата
+    await state.update_data(restore_return_callback=return_callback)
+
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Да, восстановить", callback_data=f"restore_yes_{product_id}")],
-            [InlineKeyboardButton(text="❌ Нет, отменить", callback_data="deleted_products_list")],
+            [InlineKeyboardButton(text="❌ Нет, отменить", callback_data=return_callback)],
         ]
     )
 
@@ -1708,7 +1720,37 @@ async def restore_confirm(callback: CallbackQuery, state: FSMContext):
         f"Вы уверены, что хотите восстановить этот товар в каталоге?"
     )
 
-    await render_admin_banner(callback.message, text, keyboard)
+    if product['image_file_id']:
+        try:
+            await callback.bot.edit_message_media(
+                chat_id=callback.message.chat.id,
+                message_id=callback.message.message_id,
+                media=InputMediaPhoto(
+                    media=product['image_file_id'],
+                    caption=text,
+                    parse_mode=ParseMode.HTML,
+                ),
+                reply_markup=keyboard,
+            )
+        except Exception as e:
+            error_text = str(e).lower()
+            if "message is not modified" in error_text:
+                await callback.answer()
+                return
+            logger.warning(f"restore_confirm: edit_message_media failed: {e}, sending new photo")
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            await callback.message.answer_photo(
+                photo=product['image_file_id'],
+                caption=text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML,
+            )
+    else:
+        await render_admin_banner(callback.message, text, keyboard)
+
     await callback.answer()
 
 
@@ -1717,29 +1759,64 @@ async def restore_yes(callback: CallbackQuery, state: FSMContext):
     """Восстановление товара"""
     product_id = int(callback.data.split("_")[2])
 
+    # Получаем данные товара до восстановления
+    product = await get_product_by_id(product_id)
+    if not product:
+        await callback.answer("❌ Товар не найден.", show_alert=True)
+        return
+
+    product_name = product['name']
+    product_category = product['category']
+    product_image = product['image_file_id']
+
     success = await restore_product(product_id)
 
     if success:
-        await safe_edit(
-            callback,
-            f"✅ <b>Товар восстановлен!</b>\n\n"
-            f"Товар с ID <code>{product_id}</code> снова доступен в каталоге.",
+        text = (
+            f"✅ <b>Товар восстановлен</b>\n\n"
+            f"🆔 ID: <code>{product_id}</code>\n"
+            f"🔹 <b>{escape_html(product_name)}</b>\n"
+            f"🏷️ {escape_html(product_category)}"
         )
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="📦 Продолжить управление", callback_data="admin_products")]
+            ]
+        )
+
+        # Редактируем исходное сообщение подтверждения
+        if product_image:
+            try:
+                await callback.bot.edit_message_media(
+                    chat_id=callback.message.chat.id,
+                    message_id=callback.message.message_id,
+                    media=InputMediaPhoto(
+                        media=product_image,
+                        caption=text,
+                        parse_mode=ParseMode.HTML,
+                    ),
+                    reply_markup=keyboard,
+                )
+            except Exception as e:
+                error_text = str(e).lower()
+                if "message is not modified" in error_text:
+                    await callback.answer()
+                    return
+                logger.warning(f"restore_yes: edit_message_media failed: {e}, sending new photo")
+                try:
+                    await callback.message.delete()
+                except Exception:
+                    pass
+                await callback.message.answer_photo(
+                    photo=product_image,
+                    caption=text,
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.HTML,
+                )
+        else:
+            await render_admin_banner(callback.message, text, keyboard)
     else:
         await safe_edit(callback, "❌ Ошибка при восстановлении товара.")
-
-    await state.clear()
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📦 Продолжить управление", callback_data="admin_products")],
-            [InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="admin_back_to_panel")],
-        ]
-    )
-    await callback.message.answer(
-        "Выберите дальнейшее действие:",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML,
-    )
 
     await callback.answer()
