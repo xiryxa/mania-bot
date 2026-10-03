@@ -1,4 +1,5 @@
 # ==================== ИМПОРТЫ ====================
+import asyncio
 import logging
 from aiogram import F, Router
 from aiogram.enums import ParseMode
@@ -28,7 +29,7 @@ from db import (
 )
 from filters import IsAdmin
 from forms.users import AdminProductEditState, AdminProductState
-from config import CATEGORY_MAP
+from config import CATEGORY_MAP, ADMIN_NAV_BANNER_ID
 
 # ==================== НАСТРОЙКА ====================
 logger = logging.getLogger(__name__)
@@ -315,12 +316,41 @@ async def product_add_start(callback: CallbackQuery, state: FSMContext):
         ]
     )
 
-    await safe_edit(
-        callback,
+    text = (
         "📝 <b>Добавление товара</b>\n\n"
-        "Введите <b>название</b> товара (манка):",
-        keyboard,
+        "Введите <b>название</b> товара (манка):"
     )
+
+    try:
+        await callback.bot.edit_message_media(
+            chat_id=callback.message.chat.id,
+            message_id=callback.message.message_id,
+            media=InputMediaPhoto(
+                media=ADMIN_NAV_BANNER_ID,
+                caption=text,
+                parse_mode=ParseMode.HTML,
+            ),
+            reply_markup=keyboard,
+        )
+        add_bot_message_id = callback.message.message_id
+    except Exception as e:
+        error_text = str(e).lower()
+        if "message is not modified" in error_text:
+            add_bot_message_id = callback.message.message_id
+        else:
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            new_msg = await callback.message.answer_photo(
+                photo=ADMIN_NAV_BANNER_ID,
+                caption=text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML,
+            )
+            add_bot_message_id = new_msg.message_id
+
+    await state.update_data(add_bot_message_id=add_bot_message_id)
     await callback.answer()
 
 
@@ -335,20 +365,16 @@ async def product_add_name(message: Message, state: FSMContext):
     data = await state.get_data()
     product_data = data.get("product_data", {})
     product_data["name"] = name
+
+    text = "📝 Введите <b>описание</b> товара:"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_products")]]
+    )
+
+    await message.delete()
+    await _update_add_flow_message(message.bot, message.chat.id, data.get("add_bot_message_id"), text, keyboard, state)
     await state.update_data(product_data=product_data)
     await state.set_state(AdminProductState.adding_description)
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_products")]
-        ]
-    )
-
-    await message.answer(
-        "📝 Введите <b>описание</b> товара:",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML,
-    )
 
 
 @router.message(StateFilter(AdminProductState.adding_description), F.text)
@@ -362,20 +388,16 @@ async def product_add_description(message: Message, state: FSMContext):
     data = await state.get_data()
     product_data = data.get("product_data", {})
     product_data["description"] = description
+
+    text = "💰 Введите <b>цену</b> товара (в рублях, только цифры):"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_products")]]
+    )
+
+    await message.delete()
+    await _update_add_flow_message(message.bot, message.chat.id, data.get("add_bot_message_id"), text, keyboard, state)
     await state.update_data(product_data=product_data)
     await state.set_state(AdminProductState.adding_price)
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_products")]
-        ]
-    )
-
-    await message.answer(
-        "💰 Введите <b>цену</b> товара (в рублях, только цифры):",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML,
-    )
 
 
 @router.message(StateFilter(AdminProductState.adding_price), F.text)
@@ -393,9 +415,8 @@ async def product_add_price(message: Message, state: FSMContext):
     data = await state.get_data()
     product_data = data.get("product_data", {})
     product_data["price"] = price
-    await state.update_data(product_data=product_data)
-    await state.set_state(AdminProductState.adding_category)
 
+    text = "🏷️ <b>Выберите категорию товара:</b>"
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🦆 Goose", callback_data="category_goose")],
@@ -404,11 +425,72 @@ async def product_add_price(message: Message, state: FSMContext):
         ]
     )
 
-    await message.answer(
-        "🏷️ <b>Выберите категорию товара:</b>",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML,
+    await message.delete()
+    await _update_add_flow_message(message.bot, message.chat.id, data.get("add_bot_message_id"), text, keyboard, state)
+    await state.update_data(product_data=product_data)
+    await state.set_state(AdminProductState.adding_category)
+
+
+@router.message(StateFilter(AdminProductState.adding_quantity), F.text)
+async def product_add_quantity(message: Message, state: FSMContext):
+    """Ввод количества товара"""
+    if not message.text.isdigit():
+        await message.answer("❌ Введите корректное количество (только цифры).")
+        return
+
+    quantity = int(message.text)
+    if quantity < 0:
+        await message.answer("❌ Количество не может быть отрицательным.")
+        return
+
+    data = await state.get_data()
+    product_data = data.get("product_data", {})
+    product_data["quantity"] = quantity
+
+    text = (
+        "📸 <b>Добавьте фото товара</b>\n\n"
+        "Отправьте фото или нажмите «Пропустить»:"
     )
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⏩ Пропустить", callback_data="photo_skip")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_products")],
+        ]
+    )
+
+    await message.delete()
+    await _update_add_flow_message(message.bot, message.chat.id, data.get("add_bot_message_id"), text, keyboard, state)
+    await state.update_data(product_data=product_data)
+    await state.set_state(AdminProductState.adding_photo)
+
+
+# Вспомогательная функция внутри файла (добавь её перед product_add_name или в начало файла после импортов)
+async def _update_add_flow_message(bot, chat_id: int, msg_id: int, text: str, keyboard, state: FSMContext):
+    """Редактирует сообщение добавления или создает новое, если старое удалено"""
+    try:
+        await bot.edit_message_media(
+            chat_id=chat_id,
+            message_id=msg_id,
+            media=InputMediaPhoto(
+                media=ADMIN_NAV_BANNER_ID,
+                caption=text,
+                parse_mode=ParseMode.HTML,
+            ),
+            reply_markup=keyboard,
+        )
+    except Exception:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except Exception:
+            pass
+        new_msg = await bot.send_photo(
+            chat_id=chat_id,
+            photo=ADMIN_NAV_BANNER_ID,
+            caption=text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML,
+        )
+        await state.update_data(add_bot_message_id=new_msg.message_id)
 
 
 @router.callback_query(
@@ -427,83 +509,50 @@ async def product_add_category_callback(callback: CallbackQuery, state: FSMConte
     await state.update_data(product_data=product_data)
     await state.set_state(AdminProductState.adding_quantity)
 
+    text = f"📦 Введите <b>количество</b> товара в наличии (цифрой):\n\n🏷️ Категория: {category}"
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_products")]
         ]
     )
 
-    await safe_edit(
-        callback,
-        f"📦 Введите <b>количество</b> товара в наличии (цифрой):\n\n"
-        f"🏷️ Категория: {category}",
-        keyboard,
-    )
+    msg_id = data.get("add_bot_message_id")
+    try:
+        await callback.bot.edit_message_media(
+            chat_id=callback.message.chat.id,
+            message_id=msg_id,
+            media=InputMediaPhoto(
+                media=ADMIN_NAV_BANNER_ID,
+                caption=text,
+                parse_mode=ParseMode.HTML,
+            ),
+            reply_markup=keyboard,
+        )
+    except Exception:
+        try:
+            await callback.bot.delete_message(chat_id=callback.message.chat.id, message_id=msg_id)
+        except Exception:
+            pass
+        new_msg = await callback.message.answer_photo(
+            photo=ADMIN_NAV_BANNER_ID,
+            caption=text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML,
+        )
+        await state.update_data(add_bot_message_id=new_msg.message_id)
+
     await callback.answer()
-
-
-@router.message(StateFilter(AdminProductState.adding_quantity), F.text)
-async def product_add_quantity(message: Message, state: FSMContext):
-    """Ввод количества товара"""
-    if not message.text.isdigit():
-        await message.answer("❌ Введите корректное количество (только цифры).")
-        return
-
-    quantity = int(message.text)
-    if quantity < 0:
-        await message.answer("❌ Количество не может быть отрицательным.")
-        return
-
-    data = await state.get_data()
-    product_data = data.get("product_data", {})
-    product_data["quantity"] = quantity
-    await state.update_data(product_data=product_data)
-    await state.set_state(AdminProductState.adding_photo)
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⏩ Пропустить", callback_data="photo_skip")],
-            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_products")],
-        ]
-    )
-
-    await message.answer(
-        f"📸 <b>Добавьте фото товара</b> (опционально)\n\n"
-        f"Отправьте фото или нажмите «Пропустить»:",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML,
-    )
-
-
-@router.callback_query(
-    StateFilter(AdminProductState.adding_photo),
-    F.data == "photo_skip",
-    IsAdmin(),
-)
-async def product_add_photo_skip(callback: CallbackQuery, state: FSMContext):
-    """Пропустить добавление фото"""
-    await save_product(callback.message, state, callback)
-    await callback.answer()
-
-
-@router.message(StateFilter(AdminProductState.adding_photo), F.photo, IsAdmin())
-async def product_add_photo(message: Message, state: FSMContext):
-    """Получение фото товара"""
-    photo = message.photo[-1]
-    file_id = photo.file_id
-
-    data = await state.get_data()
-    product_data = data.get("product_data", {})
-    product_data["image_file_id"] = file_id
-    await state.update_data(product_data=product_data)
-
-    await save_product(message, state)
 
 
 async def save_product(message: Message, state: FSMContext, callback: CallbackQuery = None):
     """Сохранить товар в БД"""
     data = await state.get_data()
     product_data = data.get("product_data", {})
+    msg_id = data.get("add_bot_message_id")
+
+    # Определяем chat_id и bot в зависимости от того, откуда вызвана функция
+    chat_id = message.chat.id if message else callback.message.chat.id
+    bot = message.bot if message else callback.bot
 
     try:
         await add_product(
@@ -533,13 +582,32 @@ async def save_product(message: Message, state: FSMContext, callback: CallbackQu
             ]
         )
 
-        if callback:
+        # Показываем фото товара, если оно есть, иначе баннер
+        photo_to_show = product_data.get("image_file_id") or ADMIN_NAV_BANNER_ID
+
+        try:
+            await bot.edit_message_media(
+                chat_id=chat_id,
+                message_id=msg_id,
+                media=InputMediaPhoto(
+                    media=photo_to_show,
+                    caption=text,
+                    parse_mode=ParseMode.HTML,
+                ),
+                reply_markup=keyboard,
+            )
+        except Exception:
             try:
-                await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+                await bot.delete_message(chat_id=chat_id, message_id=msg_id)
             except Exception:
-                await callback.message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-        else:
-            await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+                pass
+            await bot.send_photo(
+                chat_id=chat_id,
+                photo=photo_to_show,
+                caption=text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML,
+            )
 
         await state.clear()
         await state.set_state(AdminProductState.selecting_action)
@@ -548,12 +616,41 @@ async def save_product(message: Message, state: FSMContext, callback: CallbackQu
         logger.error(f"Error adding product: {e}", exc_info=True)
         error_text = "❌ Ошибка при добавлении товара. Попробуйте позже."
         if callback:
-            try:
-                await callback.message.edit_text(error_text, parse_mode=ParseMode.HTML)
-            except Exception:
-                await callback.message.answer(error_text, parse_mode=ParseMode.HTML)
+            await callback.message.answer(error_text, parse_mode=ParseMode.HTML)
         else:
             await message.answer(error_text, parse_mode=ParseMode.HTML)
+
+
+
+
+@router.callback_query(
+    StateFilter(AdminProductState.adding_photo),
+    F.data == "photo_skip",
+    IsAdmin(),
+)
+async def product_add_photo_skip(callback: CallbackQuery, state: FSMContext):
+    """Пропустить добавление фото"""
+    await save_product(callback.message, state, callback)
+    await callback.answer()
+
+
+@router.message(StateFilter(AdminProductState.adding_photo), F.photo, IsAdmin())
+async def product_add_photo(message: Message, state: FSMContext):
+    """Получение фото товара"""
+    photo = message.photo[-1]
+    file_id = photo.file_id
+
+    data = await state.get_data()
+    product_data = data.get("product_data", {})
+    product_data["image_file_id"] = file_id
+    await state.update_data(product_data=product_data)
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    await save_product(message, state)
 
 
 # ==================== РЕДАКТИРОВАНИЕ ТОВАРА ====================
@@ -843,7 +940,6 @@ async def edit_photo_process(message: Message, state: FSMContext):
             f"🏷️ <b>Категория:</b> {escape_html(product['category'])}\n"
             f"📦 <b>В наличии:</b> {product['quantity']} шт.\n"
             f"📷 <b>Фото:</b> ✅ есть\n\n"
-            f"✅ <b>Фото обновлено!</b>\n\n"
             f"Выберите поле для изменения:"
         )
 
@@ -896,6 +992,13 @@ async def edit_photo_process(message: Message, state: FSMContext):
                     await state.update_data(edit_bot_message_id=new_msg.message_id)
         else:
             await render_admin_banner(message, text, keyboard)
+
+        notification_msg = await message.answer("✅ Фото обновлено!")
+        await asyncio.sleep(3)
+        try:
+            await notification_msg.delete()
+        except Exception:
+            pass
 
     except Exception as e:
         logger.error(f"Error updating product photo: {e}", exc_info=True)
@@ -1272,7 +1375,6 @@ async def product_edit_value(message: Message, state: FSMContext):
                 f"🏷️ <b>Категория:</b> {escape_html(update_data['category'])}\n"
                 f"📦 <b>В наличии:</b> {update_data['quantity']} шт.\n"
                 f"📷 <b>Фото:</b> {'✅ есть' if current_image else '❌ нет'}\n\n"
-                f"✅ <b>{field_ru} обновлено!</b>\n\n"
                 f"Выберите поле для изменения:"
             )
 
@@ -1325,19 +1427,22 @@ async def product_edit_value(message: Message, state: FSMContext):
                         await state.update_data(edit_bot_message_id=new_msg.message_id)
             elif edit_bot_message_id:
                 try:
-                    await message.bot.edit_message_text(
+                    await message.bot.edit_message_media(
                         chat_id=message.chat.id,
                         message_id=edit_bot_message_id,
-                        text=text,
+                        media=InputMediaPhoto(
+                            media=ADMIN_NAV_BANNER_ID,
+                            caption=text,
+                            parse_mode=ParseMode.HTML,
+                        ),
                         reply_markup=keyboard,
-                        parse_mode=ParseMode.HTML,
                     )
                 except Exception as e:
                     error_text = str(e).lower()
                     if "message is not modified" in error_text:
                         pass
                     else:
-                        logger.warning(f"product_edit_value: edit_message_text failed: {e}, sending new")
+                        logger.warning(f"product_edit_value: edit_message_media (banner) failed: {e}, sending new")
                         try:
                             await message.bot.delete_message(
                                 chat_id=message.chat.id,
@@ -1345,14 +1450,22 @@ async def product_edit_value(message: Message, state: FSMContext):
                             )
                         except Exception:
                             pass
-                        new_msg = await message.answer(
-                            text=text,
+                        new_msg = await message.answer_photo(
+                            photo=ADMIN_NAV_BANNER_ID,
+                            caption=text,
                             reply_markup=keyboard,
                             parse_mode=ParseMode.HTML,
                         )
                         await state.update_data(edit_bot_message_id=new_msg.message_id)
             else:
                 await render_admin_banner(message, text, keyboard)
+
+            notification_msg = await message.answer(f"✅ {field_ru} обновлено!")
+            await asyncio.sleep(3)
+            try:
+                await notification_msg.delete()
+            except Exception:
+                pass
         else:
             await message.answer("❌ Ошибка при обновлении товара.")
 
