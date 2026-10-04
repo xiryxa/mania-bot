@@ -140,15 +140,15 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
     head = (
         f"📦 <b>Товар {page + 1} из {total}</b>\n"
         f"━━━━━━━━━━━━━━━━━\n\n"
-        f"🆔 ID: <code>{product['id']}</code>\n"
-        f" Название: <b>{escape_html(product['name'])}</b>\n"
-        f" Описание: "
+        f"🆔 <b>ID:</b> <code>{product['id']}</code>\n"
+        f"📌 <b>Название:</b> {escape_html(product['name'])}\n"
+        f"📝 <b>Описание:</b> "
     )
     tail = (
-        f"\n💰 Цена: {product['price']} ₽\n"
-        f"🏷️ Категория: {escape_html(product['category'])}\n"
+        f"\n💰 <b>Цена:</b> {product['price']} ₽\n"
+        f"🏷️ <b>Категория:</b> {escape_html(product['category'])}\n"
         f"{stock_status}\n"
-        f"📷 Фото: {'✅ есть' if product['image_file_id'] else '❌ нет'}"
+        f"📷 <b>Фото:</b> {'✅ есть' if product['image_file_id'] else '❌ нет'}"
     )
 
     budget = CAPTION_LIMIT - visible_len(head + tail) - 4
@@ -170,7 +170,7 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
             ],
             [
                 InlineKeyboardButton(text="📝 Текстовый список", callback_data="product_list_text"),
-                InlineKeyboardButton(text="➕ Добавить", callback_data="product_add"),
+                InlineKeyboardButton(text="➕ Добавить", callback_data=f"product_add_from_list_{page}"),
             ],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_products")],
         ]
@@ -218,6 +218,7 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
 async def admin_product_page(callback: CallbackQuery, state: FSMContext):
     """Переключение страницы в админ-списке товаров"""
     page = int(callback.data.split("_")[3])
+    await state.update_data(admin_page=page)
     await show_admin_product(callback.message, state, page)
     await callback.answer()
 
@@ -258,24 +259,24 @@ async def show_admin_product_text(message: Message, state: FSMContext, page: int
         await message.answer("❌ Товары не найдены.")
         return
 
-    items_per_page = 8
+    items_per_page = 5
     total_pages = (len(products) + items_per_page - 1) // items_per_page
 
     start_idx = page * items_per_page
     end_idx = min(start_idx + items_per_page, len(products))
     page_products = products[start_idx:end_idx]
 
-    text = f" <b>Список товаров (стр. {page + 1} из {total_pages})</b>\n"
+    text = f"📋 <b>Список товаров (стр. {page + 1} из {total_pages})</b>\n"
     text += "━━━━━━━━━━━━━━━━━\n\n"
 
     for product in page_products:
         quantity = product["quantity"]
         text += (
-            f" <b>{escape_html(product['name'])}</b>\n"
-            f"   🆔 ID: <code>{product['id']}</code>\n"
-            f"   🏷️ {escape_html(product['category'])} | 💰 {product['price']} ₽\n"
-            f"    В наличии: {quantity} шт.\n"
-            f"   📷 {'🖼️ есть' if product['image_file_id'] else '❌ нет'}\n"
+            f"📌<b>Название:</b> {escape_html(product['name'])}\n"
+            f"🆔<b>ID:</b> <code>{product['id']}</code>\n"
+            f"🏷️<b>Категория:</b> {escape_html(product['category'])} | 💰 <b>Цена:</b> {product['price']} ₽\n"
+            f"📦<b>В наличии:</b> {quantity} шт.\n"
+            f"📷<b>Фото:</b> {'🖼️ есть' if product['image_file_id'] else '❌ нет'}\n"
             f"   ─────────────\n"
         )
 
@@ -286,10 +287,12 @@ async def show_admin_product_text(message: Message, state: FSMContext, page: int
     if page < total_pages - 1:
         nav_buttons.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"product_text_page_{page + 1}"))
 
+    # Возврат на ту же страницу фото-списка, с которой пришли
+    return_page = data.get("admin_page", 0)
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             nav_buttons if nav_buttons else [],
-            [InlineKeyboardButton(text="🖼️ Вернуться к просмотру с фото", callback_data="product_list")],
+            [InlineKeyboardButton(text="🖼️ Вернуться к просмотру с фото", callback_data=f"product_page_admin_{return_page}")],
         ]
     )
 
@@ -304,15 +307,27 @@ async def product_text_page_callback(callback: CallbackQuery, state: FSMContext)
 
 
 # ==================== ДОБАВЛЕНИЕ ТОВАРА (FSM) ====================
-@router.callback_query(F.data == "product_add", IsAdmin())
+@router.callback_query(F.data.startswith("product_add"), IsAdmin())
 async def product_add_start(callback: CallbackQuery, state: FSMContext):
     """Начать добавление товара"""
     await state.set_state(AdminProductState.adding_name)
     await state.update_data(product_data={})
 
+    # Определяем контекст возврата
+    if callback.data.startswith("product_add_from_list_"):
+        try:
+            page = int(callback.data.split("_")[4])
+            return_callback = f"product_page_admin_{page}"
+        except (IndexError, ValueError):
+            return_callback = "admin_products"
+    else:
+        return_callback = "admin_products"
+
+    await state.update_data(add_return_callback=return_callback)
+
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_products")]
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data=return_callback)]
         ]
     )
 
@@ -368,7 +383,7 @@ async def product_add_name(message: Message, state: FSMContext):
 
     text = "📝 Введите <b>описание</b> товара:"
     keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_products")]]
+        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data=data.get("add_return_callback", "admin_products"))]]
     )
 
     await message.delete()
@@ -391,7 +406,7 @@ async def product_add_description(message: Message, state: FSMContext):
 
     text = "💰 Введите <b>цену</b> товара (в рублях, только цифры):"
     keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_products")]]
+        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data=data.get("add_return_callback", "admin_products"))]]
     )
 
     await message.delete()
@@ -421,7 +436,7 @@ async def product_add_price(message: Message, state: FSMContext):
         inline_keyboard=[
             [InlineKeyboardButton(text="🦆 Goose", callback_data="category_goose")],
             [InlineKeyboardButton(text="🦆 Duck", callback_data="category_duck")],
-            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_products")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data=data.get("add_return_callback", "admin_products"))],
         ]
     )
 
@@ -454,7 +469,7 @@ async def product_add_quantity(message: Message, state: FSMContext):
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⏩ Пропустить", callback_data="photo_skip")],
-            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_products")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data=data.get("add_return_callback", "admin_products"))],
         ]
     )
 
@@ -512,7 +527,7 @@ async def product_add_category_callback(callback: CallbackQuery, state: FSMConte
     text = f"📦 Введите <b>количество</b> товара в наличии (цифрой):\n\n🏷️ Категория: {category}"
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_products")]
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data=data.get("add_return_callback", "admin_products"))]
         ]
     )
 
@@ -567,7 +582,8 @@ async def save_product(message: Message, state: FSMContext, callback: CallbackQu
 
         text = (
             f"✅ <b>Товар добавлен!</b>\n\n"
-            f"📝 <b>Название:</b> {escape_html(product_data.get('name'))}\n"
+            f"📌 <b>Название:</b> {escape_html(product_data.get('name'))}\n"
+            f"📝 <b>Описание:</b> {escape_html(product_data.get('description'))}\n"
             f"💰 <b>Цена:</b> {product_data.get('price')} ₽\n"
             f"🏷️ <b>Категория:</b> {escape_html(product_data.get('category'))}\n"
             f"📦 <b>В наличии:</b> {product_data.get('quantity', 0)} шт.\n"
@@ -924,6 +940,16 @@ async def edit_photo_process(message: Message, state: FSMContext):
         except Exception:
             pass
 
+        # Точечное обновление кэша списка товаров
+        admin_products = data.get("admin_products", [])
+        for i, p in enumerate(admin_products):
+            if p['id'] == product_id:
+                product_dict = dict(p)
+                product_dict['image_file_id'] = image_file_id
+                admin_products[i] = product_dict
+                break
+        await state.update_data(admin_products=admin_products)
+
         await state.set_state(AdminProductState.editing_field)
 
         product = await get_product_by_id(product_id)
@@ -1205,6 +1231,17 @@ async def product_edit_category_select(callback: CallbackQuery, state: FSMContex
             ozon_url=product['ozon_url'],
             image_file_id=product['image_file_id'],
         )
+
+        # Точечное обновление кэша списка товаров
+        admin_products = data.get("admin_products", [])
+        for i, p in enumerate(admin_products):
+            if p['id'] == product_id:
+                product_dict = dict(p)
+                product_dict['category'] = new_category
+                admin_products[i] = product_dict
+                break
+        await state.update_data(admin_products=admin_products)
+
         await state.set_state(AdminProductState.editing_field)
         head = (
             f"✏️ <b>Редактирование товара</b>\n"
@@ -1351,6 +1388,22 @@ async def product_edit_value(message: Message, state: FSMContext):
             if result.get("restocked") and result.get("product_id"):
                 from utils.notifications import notify_back_in_stock
                 await notify_back_in_stock(result["product_id"], message.bot)
+
+            # Точечное обновление кэша списка товаров
+            admin_products = data.get("admin_products", [])
+            for i, p in enumerate(admin_products):
+                if p['id'] == product_id:
+                    admin_products[i] = {
+                        'id': product_id,
+                        'name': update_data["name"],
+                        'description': update_data["description"],
+                        'price': update_data["price"],
+                        'category': update_data["category"],
+                        'quantity': update_data["quantity"],
+                        'image_file_id': current_image,
+                    }
+                    break
+            await state.update_data(admin_products=admin_products)
 
             await state.set_state(AdminProductState.editing_field)
 
@@ -1538,12 +1591,17 @@ async def product_delete_confirm(callback: CallbackQuery, state: FSMContext):
         ]
     )
 
+    # Ограничиваем описание до 100 символов
+    desc = product['description']
+    desc_short = desc[:100] + ('...' if len(desc) > 100 else '')
+
     text = (
         f"🗑️ <b>Подтвердите удаление</b>\n\n"
-        f"🔹 <b>{escape_html(product['name'])}</b>\n"
-        f"💰 {product['price']} ₽\n"
-        f"🏷️ {escape_html(product['category'])}\n"
-        f"📦 В наличии: {product['quantity']} шт.\n\n"
+        f"📌 <b>Название:</b> {escape_html(product['name'])}\n"
+        f"📝 <b>Описание:</b> {escape_html(desc_short)}\n"
+        f"💰 <b>Цена:</b> {product['price']} ₽\n"
+        f"🏷️ <b>Категория:</b> {escape_html(product['category'])}\n"
+        f"📦 <b>В наличии:</b> {product['quantity']} шт.\n\n"
         f"Вы уверены, что хотите удалить этот товар?"
     )
 
@@ -1824,12 +1882,17 @@ async def restore_confirm(callback: CallbackQuery, state: FSMContext):
         ]
     )
 
+    # Ограничиваем описание до 100 символов
+    desc = product['description']
+    desc_short = desc[:100] + ('...' if len(desc) > 100 else '')
+
     text = (
         f"♻️ <b>Восстановление товара</b>\n\n"
-        f"🔹 <b>{escape_html(product['name'])}</b>\n"
-        f"💰 {product['price']} ₽\n"
-        f"🏷️ {escape_html(product['category'])}\n"
-        f"📦 В наличии: {product['quantity']} шт.\n\n"
+        f"📌 <b>Название:</b> {escape_html(product['name'])}\n"
+        f"📝 <b>Описание:</b> {escape_html(desc_short)}\n"
+        f"💰 <b>Цена:</b> {product['price']} ₽\n"
+        f"🏷️ <b>Категория:</b> {escape_html(product['category'])}\n"
+        f"📦 <b>В наличии:</b> {product['quantity']} шт.\n\n"
         f"Вы уверены, что хотите восстановить этот товар в каталоге?"
     )
 
