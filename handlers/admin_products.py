@@ -981,8 +981,8 @@ async def edit_field_photo(callback: CallbackQuery, state: FSMContext):
     edit_bot_message_id = data.get("edit_bot_message_id")
 
     text = (
-        "📷 <b>Редактирование фото</b>\n\n"
-        "Отправьте новое фото для товара."
+    "📷 <b>Редактирование фото</b>\n\n"
+    "⬆️ Отправьте новое фото для товара."
     )
 
     keyboard = InlineKeyboardMarkup(
@@ -1318,14 +1318,39 @@ async def product_edit_field(callback: CallbackQuery, state: FSMContext):
                 [InlineKeyboardButton(text="⬅️ Отмена", callback_data=f"edit_select_{product_id}")],
             ]
         )
-        text = "🏷️ <b>Выберите новую категорию товара:</b>"
+        current_category = product['category'] if product else 'Не указана'
+        text = (
+            f"🏷️ <b>Текущая категория:</b> {escape_html(current_category)}\n\n"
+            f"🏷️ <b>Выберите новую категорию товара:</b>"
+        )
     else:
         field_names = {
             "name": "название",
             "description": "описание",
-            "price": "цену",
+            "price": "цена",
             "quantity": "количество",
         }
+        field_emojis = {
+            "name": "📌",
+            "description": "📝",
+            "price": "💰",
+            "quantity": "📦",
+        }
+
+        field_ru = field_names.get(field, field)
+        emoji = field_emojis.get(field, "✏️")
+
+        # sqlite3.Row не имеет метода .get(), используем прямой доступ по ключу
+        current_value = product[field] if product else "Не указано"
+
+        # Форматируем текущее значение для красивого вывода
+        if field == "price":
+            current_display = f"{current_value} ₽"
+        elif field == "quantity":
+            current_display = f"{current_value} шт."
+        else:
+            current_display = str(current_value)
+
         await state.update_data(editing_field=field)
         await state.set_state(AdminProductState.editing_value)
 
@@ -1334,7 +1359,11 @@ async def product_edit_field(callback: CallbackQuery, state: FSMContext):
                 [InlineKeyboardButton(text="⬅️ Отмена", callback_data=f"edit_select_{product_id}")]
             ]
         )
-        text = f"✏️ Введите новое <b>{field_names.get(field, field)}</b>:"
+
+        text = (
+            f"{emoji} <b>Текущее {field_ru}:</b> {escape_html(current_display)}\n\n"
+            f"✏️ Введите новое <b>{field_ru}</b>:"
+        )
 
     if product and product['image_file_id']:
         try:
