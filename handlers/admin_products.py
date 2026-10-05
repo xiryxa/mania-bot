@@ -72,7 +72,7 @@ async def admin_products_menu(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="✏️ Редактировать товар", callback_data="product_edit")],
             [InlineKeyboardButton(text="🗑️ Удалить товар", callback_data="product_delete")],
             [InlineKeyboardButton(text="📋 Список товаров", callback_data="product_list")],
-            [InlineKeyboardButton(text="🗑 Удалённые товары", callback_data="deleted_products_list")],
+            [InlineKeyboardButton(text="♻️ Удалённые товары", callback_data="deleted_products_list")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back_to_panel")],
         ]
     )
@@ -307,7 +307,7 @@ async def product_text_page_callback(callback: CallbackQuery, state: FSMContext)
 
 
 # ==================== ДОБАВЛЕНИЕ ТОВАРА (FSM) ====================
-@router.callback_query(F.data.startswith("product_add"), IsAdmin())
+@router.callback_query((F.data == "product_add") | F.data.startswith("product_add_from_list_"), IsAdmin())
 async def product_add_start(callback: CallbackQuery, state: FSMContext):
     """Начать добавление товара"""
     await state.set_state(AdminProductState.adding_name)
@@ -369,6 +369,49 @@ async def product_add_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+async def _delete_message_after_delay(message: Message, delay: int = 3):
+    """Удаляет сообщение через указанное время, не блокируя основной поток"""
+    await asyncio.sleep(delay)
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "product_add_cancel", IsAdmin())
+async def product_add_cancel(callback: CallbackQuery, state: FSMContext):
+    """Отмена добавления товара с возвратом в исходный контекст"""
+    data = await state.get_data()
+    return_callback = data.get("add_return_callback", "admin_products")
+
+    # 1. Показываем уведомление об отмене
+    cancel_msg = await callback.message.answer("❌ Добавление товара отменено")
+
+    # 2. Запускаем удаление в фоне (не блокирует возврат!)
+    asyncio.create_task(_delete_message_after_delay(cancel_msg, 3))
+
+    # 3. Точечная очистка state: удаляем только данные добавления, сохраняя контекст списка
+    clean_data = {
+        k: v for k, v in data.items()
+        if k not in ("product_data", "add_bot_message_id", "add_return_callback")
+    }
+    await state.set_data(clean_data)
+    await state.set_state(None)  # Сбрасываем текущее состояние FSM
+
+    # 4. Мгновенный возврат в исходный контекст
+    if return_callback == "admin_products":
+        await admin_products_menu(callback, state)
+    else:
+        # Возврат на конкретную страницу списка товаров
+        try:
+            page = int(return_callback.split("_")[-1])
+            await show_admin_product(callback.message, state, page)
+        except (ValueError, IndexError):
+            await admin_products_menu(callback, state)
+
+    await callback.answer()
+
+
 @router.message(StateFilter(AdminProductState.adding_name), F.text)
 async def product_add_name(message: Message, state: FSMContext):
     """Ввод названия товара"""
@@ -381,9 +424,12 @@ async def product_add_name(message: Message, state: FSMContext):
     product_data = data.get("product_data", {})
     product_data["name"] = name
 
-    text = "📝 Введите <b>описание</b> товара:"
+    text = (
+        f"📌 <b>Название:</b> {escape_html(name)}\n\n"
+        f"📝 Введите <b>описание</b> товара:"
+    )
     keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data=data.get("add_return_callback", "admin_products"))]]
+        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data="product_add_cancel")]]
     )
 
     await message.delete()
@@ -404,9 +450,15 @@ async def product_add_description(message: Message, state: FSMContext):
     product_data = data.get("product_data", {})
     product_data["description"] = description
 
-    text = "💰 Введите <b>цену</b> товара (в рублях, только цифры):"
+    # Прогрессивный текст: показываем название и описание
+    text = (
+        f"📌 <b>Название:</b> {escape_html(product_data.get('name', 'Не указано'))}\n"
+        f"📝 <b>Описание:</b> {escape_html(description[:150] + ('...' if len(description) > 150 else ''))}\n\n"
+        f"💰 Введите <b>цену</b> товара (в рублях, только цифры):"
+    )
+
     keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data=data.get("add_return_callback", "admin_products"))]]
+        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data="product_add_cancel")]]
     )
 
     await message.delete()
@@ -431,12 +483,21 @@ async def product_add_price(message: Message, state: FSMContext):
     product_data = data.get("product_data", {})
     product_data["price"] = price
 
-    text = "🏷️ <b>Выберите категорию товара:</b>"
+    desc = product_data.get('description', 'Не указано')
+    desc_short = desc[:150] + ('...' if len(desc) > 150 else '')
+
+    text = (
+        f"📌 <b>Название:</b> {escape_html(product_data.get('name', 'Не указано'))}\n"
+        f"📝 <b>Описание:</b> {escape_html(desc_short)}\n"
+        f"💰 <b>Цена:</b> {price} ₽\n\n"
+        f"🏷️ <b>Выберите категорию товара:</b>"
+    )
+
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🦆 Goose", callback_data="category_goose")],
             [InlineKeyboardButton(text="🦆 Duck", callback_data="category_duck")],
-            [InlineKeyboardButton(text="⬅️ Отмена", callback_data=data.get("add_return_callback", "admin_products"))],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="product_add_cancel")],
         ]
     )
 
@@ -462,14 +523,22 @@ async def product_add_quantity(message: Message, state: FSMContext):
     product_data = data.get("product_data", {})
     product_data["quantity"] = quantity
 
+    desc = product_data.get('description', 'Не указано')
+    desc_short = desc[:150] + ('...' if len(desc) > 150 else '')
+
     text = (
-        "📸 <b>Добавьте фото товара</b>\n\n"
-        "Отправьте фото или нажмите «Пропустить»:"
+        f"📌 <b>Название:</b> {escape_html(product_data.get('name', 'Не указано'))}\n"
+        f"📝 <b>Описание:</b> {escape_html(desc_short)}\n"
+        f"💰 <b>Цена:</b> {product_data.get('price', 'Не указана')} ₽\n"
+        f"🏷️ <b>Категория:</b> {escape_html(product_data.get('category', 'Не выбрана'))}\n"
+        f"📦 <b>Количество:</b> {quantity} шт.\n\n"
+        f"📸 <b>Добавьте фото товара</b>\n\n"
+        f"Отправьте фото или нажмите «Пропустить»:"
     )
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⏩ Пропустить", callback_data="photo_skip")],
-            [InlineKeyboardButton(text="⬅️ Отмена", callback_data=data.get("add_return_callback", "admin_products"))],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="product_add_cancel")],
         ]
     )
 
@@ -524,10 +593,18 @@ async def product_add_category_callback(callback: CallbackQuery, state: FSMConte
     await state.update_data(product_data=product_data)
     await state.set_state(AdminProductState.adding_quantity)
 
-    text = f"📦 Введите <b>количество</b> товара в наличии (цифрой):\n\n🏷️ Категория: {category}"
+    desc = product_data.get('description', 'Не указано')
+    desc_short = desc[:150] + ('...' if len(desc) > 150 else '')
+    text = (
+        f"📌 <b>Название:</b> {escape_html(product_data.get('name', 'Не указано'))}\n"
+        f"📝 <b>Описание:</b> {escape_html(desc_short)}\n"
+        f"💰 <b>Цена:</b> {product_data.get('price', 'Не указана')} ₽\n"
+        f"🏷️ <b>Категория:</b> {category}\n\n"
+        f"📦 Введите <b>количество</b> товара в наличии (цифрой):"
+    )
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Отмена", callback_data=data.get("add_return_callback", "admin_products"))]
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="product_add_cancel")]
         ]
     )
 
@@ -645,7 +722,62 @@ async def save_product(message: Message, state: FSMContext, callback: CallbackQu
     IsAdmin(),
 )
 async def product_add_photo_skip(callback: CallbackQuery, state: FSMContext):
-    """Пропустить добавление фото"""
+    """Пропустить добавление фото и показать превью"""
+    data = await state.get_data()
+    product_data = data.get("product_data", {})
+
+    # Прогрессивный текст: показываем все заполненные поля
+    desc = product_data.get('description', 'Не указано')
+    desc_short = desc[:150] + ('...' if len(desc) > 150 else '')
+
+    text = (
+        f"📌 <b>Название:</b> {escape_html(product_data.get('name', 'Не указано'))}\n"
+        f"📝 <b>Описание:</b> {escape_html(desc_short)}\n"
+        f"💰 <b>Цена:</b> {product_data.get('price', 'Не указана')} ₽\n"
+        f"🏷️ <b>Категория:</b> {escape_html(product_data.get('category', 'Не выбрана'))}\n"
+        f"📦 <b>Количество:</b> {product_data.get('quantity', 'Не указано')} шт.\n"
+        f"📷 <b>Фото:</b> ❌ не добавлено\n\n"
+        f"✅ <b>Товар готов к созданию!</b>"
+    )
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Создать", callback_data="product_add_confirm")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="product_add_cancel")]
+        ]
+    )
+
+    # Обновляем сообщение с баннером MANIA
+    try:
+        await callback.bot.edit_message_media(
+            chat_id=callback.message.chat.id,
+            message_id=data.get("add_bot_message_id"),
+            media=InputMediaPhoto(
+                media=ADMIN_NAV_BANNER_ID,
+                caption=text,
+                parse_mode=ParseMode.HTML,
+            ),
+            reply_markup=keyboard,
+        )
+    except Exception:
+        # Fallback: отправляем новое сообщение
+        await callback.message.answer_photo(
+            photo=ADMIN_NAV_BANNER_ID,
+            caption=text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML,
+        )
+
+    await callback.answer()
+
+
+@router.callback_query(
+    StateFilter(AdminProductState.adding_photo),
+    F.data == "product_add_confirm",
+    IsAdmin(),
+)
+async def product_add_confirm(callback: CallbackQuery, state: FSMContext):
+    """Финальное подтверждение создания товара"""
     await save_product(callback.message, state, callback)
     await callback.answer()
 
@@ -666,7 +798,47 @@ async def product_add_photo(message: Message, state: FSMContext):
     except Exception:
         pass
 
-    await save_product(message, state)
+    # Прогрессивный текст: показываем все заполненные поля перед сохранением
+    desc = product_data.get('description', 'Не указано')
+    desc_short = desc[:150] + ('...' if len(desc) > 150 else '')
+
+    text = (
+        f"📌 <b>Название:</b> {escape_html(product_data.get('name', 'Не указано'))}\n"
+        f"📝 <b>Описание:</b> {escape_html(desc_short)}\n"
+        f"💰 <b>Цена:</b> {product_data.get('price', 'Не указана')} ₽\n"
+        f"🏷️ <b>Категория:</b> {escape_html(product_data.get('category', 'Не выбрана'))}\n"
+        f"📦 <b>Количество:</b> {product_data.get('quantity', 'Не указано')} шт.\n"
+        f"📷 <b>Фото:</b> ✅ добавлено\n\n"
+        f"✅ <b>Товар готов к созданию!</b>"
+    )
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Создать", callback_data="product_add_confirm")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="product_add_cancel")]
+        ]
+    )
+
+    # Обновляем сообщение с фото товара
+    try:
+        await message.bot.edit_message_media(
+            chat_id=message.chat.id,
+            message_id=data.get("add_bot_message_id"),
+            media=InputMediaPhoto(
+                media=file_id,
+                caption=text,
+                parse_mode=ParseMode.HTML,
+            ),
+            reply_markup=keyboard,
+        )
+    except Exception:
+        # Fallback: отправляем новое сообщение
+        await message.answer_photo(
+            photo=file_id,
+            caption=text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML,
+        )
 
 
 # ==================== РЕДАКТИРОВАНИЕ ТОВАРА ====================
