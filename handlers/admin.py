@@ -1119,28 +1119,31 @@ async def show_order_detail(message: Message, state: FSMContext, order_id: int):
 
     text = (
         f"{emoji} <b>Заказ #{o_id}</b>\n"
-        f"━━━━━━━━━━━━━\n"
-        f"👤 <b>Клиент:</b> {escape_html(fullname)}\n"
-        f"📞 <b>Телефон:</b> {escape_html(phone)}\n"
-        f"📧 <b>Email:</b> {escape_html(email)}\n"
-        f"🏙️ <b>Город:</b> {escape_html(city)}\n\n"
-        f"🛒 <b>Товар:</b> {escape_html(product_name)}\n"
-        f"📦 <b>Количество:</b> {quantity} шт.\n"
-        f"💰 <b>Цена за шт.:</b> {unit_price} ₽\n"
-        f"💵 <b>Сумма:</b> {total_price} ₽\n"
-        f"🚚 <b>Доставка:</b> {escape_html(delivery_method)}\n"
-        f"📍 <b>Адрес:</b> {escape_html(delivery_address)}\n"
+        f"━━━━━━━━━━━━━\n\n"
+        f"👤 <b>КЛИЕНТ</b>\n"
+        f"🔹 Имя: {escape_html(fullname)}\n"
+        f"🔹 Телефон: {escape_html(phone)}\n"
+        f"🔹 Email: {escape_html(email)}\n"
+        f"🔹 Город: {escape_html(city)}\n\n"
+        f"🛒 <b>ТОВАР</b>\n"
+        f"🔹 Товар: {escape_html(product_name)}\n"
+        f"🔹 Количество: {quantity} шт.\n"
+        f"🔹 Цена: {unit_price} ₽/шт.\n"
+        f"🔹 Сумма: {total_price} ₽\n\n"
+        f"🚚 <b>ДОСТАВКА</b>\n"
+        f"🔹 Способ: {escape_html(delivery_method)}\n"
+        f"🔹 Адрес: {escape_html(delivery_address)}\n"
     )
 
     if tracking_number:
-        text += f"📦 <b>Трек-номер:</b> {escape_html(tracking_number)}\n"
+        text += f"\n📦 <b>ТРЕК-НОМЕР</b>\n🔹 {escape_html(tracking_number)}\n"
     if comment:
-        text += f"📝 <b>Комментарий:</b> {escape_html(comment)}\n"
+        text += f"\n📝 <b>КОММЕНТАРИЙ</b>\n🔹 {escape_html(comment)}\n"
 
     text += (
+        f"\n━━━━━━━━━━━━━\n"
         f"📌 <b>Статус:</b> {status}\n"
         f"📅 <b>Создан:</b> {format_moscow_time(created_at)}\n"
-        f"━━━━━━━━━━━━━\n"
     )
 
     # Формирование клавиатуры
