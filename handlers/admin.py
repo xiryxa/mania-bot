@@ -386,21 +386,16 @@ async def admin_change_status_callback(callback: CallbackQuery, state: FSMContex
                 ]
             )
 
-            try:
-                await callback.message.delete()
-            except Exception:
-                pass
-
             status_text = "✅ Клиент уведомлён" if notification_sent else "⚠️ Клиент не уведомлён (бот заблокирован)"
 
-            await callback.message.answer(
+            text = (
                 f"✅ <b>Статус заказа #{order_id} изменён на:</b>\n"
                 f"{STATUSES[key]['label']}\n\n"
                 f"{status_text}\n\n"
-                f"Хотите добавить трек-номер для отслеживания?",
-                reply_markup=keyboard,
-                parse_mode=ParseMode.HTML,
+                f"Хотите добавить трек-номер для отслеживания?"
             )
+
+            await render_admin_banner(callback.message, text, keyboard)
 
             await state.update_data(
                 orders_filter=status_filter,
@@ -419,7 +414,7 @@ async def admin_change_status_callback(callback: CallbackQuery, state: FSMContex
                     text=f"🔄 Заказ #{order_id} отменён администратором @{callback.from_user.username or callback.from_user.id}",
                 )
 
-        await show_orders_list(callback.message, state, status_filter, page)
+        await show_order_detail(callback.message, state, order_id)
 
         if notification_sent:
             await callback.answer(
@@ -842,10 +837,7 @@ async def show_orders_list(message: Message, state: FSMContext, status_filter: s
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="admin_orders_menu")]]
         )
-        try:
-            await message.edit_text("📋 Нет заказов с выбранным фильтром.", reply_markup=keyboard, parse_mode=ParseMode.HTML)
-        except Exception:
-            await message.answer("📋 Нет заказов с выбранным фильтром.", reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        await render_admin_banner(message, "📋 Нет заказов с выбранным фильтром.", keyboard)
         return
 
     filter_names = {
