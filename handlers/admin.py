@@ -1105,44 +1105,19 @@ async def confirm_clear_tracking_callback(callback: CallbackQuery, state: FSMCon
         )
         await notify_user_safe(callback.bot, chat_id=user_id, text=notify_text)
 
-    # 4. Подтверждение админу
-    await callback.answer("✅ Трек-номер успешно очищен!", show_alert=True)
+    # 4. Подтверждение админу и мгновенный возврат к обновленной карточке
+    await callback.answer("✅ Трек-номер очищен")
     
-    text_response = "✅ <b>Трек-номер очищен.</b>\nКлиент уведомлён об аннулировании."
-    keyboard_response = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Вернуться к заказу", callback_data=f"back_to_order_{order_id}")]
-        ]
+    # Короткое уведомление об успехе (удаляется через 3 сек, как при добавлении трека)
+    success_msg = await callback.message.answer(
+        "✅ Трек-номер очищен. Клиент уведомлён.",
+        parse_mode=ParseMode.HTML,
     )
-    
-    # Редактируем текущее сообщение с баннером
-    try:
-        await callback.message.bot.edit_message_media(
-            chat_id=callback.message.chat.id,
-            message_id=callback.message.message_id,
-            media=InputMediaPhoto(
-                media=ADMIN_NAV_BANNER_ID,
-                caption=text_response,
-                parse_mode=ParseMode.HTML,
-            ),
-            reply_markup=keyboard_response,
-        )
-    except Exception as e:
-        error_text = str(e).lower()
-        if "message is not modified" in error_text:
-            pass
-        else:
-            logger.warning(f"confirm_clear_tracking_callback edit failed: {e}, sending new")
-            try:
-                await callback.message.delete()
-            except Exception:
-                pass
-            await callback.message.answer_photo(
-                photo=ADMIN_NAV_BANNER_ID,
-                caption=text_response,
-                reply_markup=keyboard_response,
-                parse_mode=ParseMode.HTML,
-            )
+    asyncio.create_task(_delete_message_after_delay(success_msg, 3))
+
+    # Редактируем текущее сообщение в обновленную карточку заказа (без трек-номера)
+    # Fallback уже встроен в show_order_detail
+    await show_order_detail(callback.message, state, order_id, target_message_id=callback.message.message_id)
         
         
 async def show_order_detail(message: Message, state: FSMContext, order_id: int, target_message_id: int = None):
@@ -1217,7 +1192,7 @@ async def show_order_detail(message: Message, state: FSMContext, order_id: int, 
 
     # Формирование клавиатуры
     keyboard_rows = []
-    keyboard_rows.append([InlineKeyboardButton(text="🔄 Изменить статус", callback_data=f"change_status_{o_id}")])
+    keyboard_rows.append([InlineKeyboardButton(text="⚙️ Изменить статус", callback_data=f"change_status_{o_id}")])
     # Если статус "отправлен" и трек отсутствует — показываем кнопку добавления
     if status == "отправлен" and not tracking_number:
         keyboard_rows.append([InlineKeyboardButton(text="➕ Добавить трек-номер", callback_data=f"add_tracking_{o_id}")])
@@ -1225,7 +1200,6 @@ async def show_order_detail(message: Message, state: FSMContext, order_id: int, 
         keyboard_rows.append([InlineKeyboardButton(text="🗑 Очистить трек", callback_data=f"clear_tracking_{o_id}")])
     
     keyboard_rows.append([InlineKeyboardButton(text="⬅️ Назад к списку", callback_data="back_to_orders_list")])
-    keyboard_rows.append([InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="admin_orders_menu")])
     
     keyboard_rows = [row for row in keyboard_rows if row]
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
