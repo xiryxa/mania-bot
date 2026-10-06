@@ -2,6 +2,7 @@
 import csv
 import io
 import logging
+import asyncio
 from os import getenv
 from aiogram import F, Router
 from aiogram.enums import ParseMode
@@ -434,8 +435,36 @@ async def admin_change_status_callback(callback: CallbackQuery, state: FSMContex
 
 @admin_router.callback_query(F.data.startswith("add_tracking_"), IsAdmin())
 async def add_tracking_callback(callback: CallbackQuery, state: FSMContext):
-    """Запрос трек-номера для заказа"""
+    """Запрос трек-номера для заказа (редактирование сообщения с баннером)"""
     order_id = int(callback.data.split("_")[2])
+
+    # Получаем данные заказа для отображения краткой информации
+    order = await get_order_by_id(order_id)
+    if not order:
+        await callback.answer("❌ Заказ не найден.", show_alert=True)
+        return
+
+    # Получаем важную информацию для сверки
+    fullname = order["order_fullname"] or "Не указан"
+    product_name = order["name"] or "Товар"
+    quantity = order["quantity"] or 1
+    city = order["city"] or "Не указан"
+
+    text = (
+        f"📦 <b>Добавление трек-номера для заказа #{order_id}</b>\n"
+        f"━━━━━━━━━━━━━\n\n"
+        f"👤 <b>Клиент:</b> {escape_html(fullname)}\n"
+        f"🏙️ <b>Город:</b> {escape_html(city)}\n"
+        f"🛒 <b>Товар:</b> {escape_html(product_name)} ({quantity} шт.)\n\n"
+        f"⬇️ <b>Введите трек-номер для отслеживания:</b>"
+    )
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="adminbacktoorder")]
+        ]
+    )
+
     data = await state.get_data()
     status_filter = data.get("orders_filter")
     page = data.get("orders_page", 0)
@@ -447,25 +476,38 @@ async def add_tracking_callback(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(AdminOrdersState.adding_tracking)
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_back_to_order")]
-        ]
-    )
-
+    # Пытаемся отредактировать текущее сообщение с баннером
     try:
-        await callback.message.delete()
-    except Exception:
-        pass
+        await callback.message.bot.edit_message_media(
+            chat_id=callback.message.chat.id,
+            message_id=callback.message.message_id,
+            media=InputMediaPhoto(
+                media=ADMIN_NAV_BANNER_ID,
+                caption=text,
+                parse_mode=ParseMode.HTML,
+            ),
+            reply_markup=keyboard,
+        )
+        sent_msg_id = callback.message.message_id
+    except Exception as e:
+        error_text = str(e).lower()
+        if "message is not modified" in error_text:
+            sent_msg_id = callback.message.message_id
+        else:
+            # Fallback: если сообщение текстовое, удаляем его и отправляем фото с баннером
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            new_msg = await callback.message.answer_photo(
+                photo=ADMIN_NAV_BANNER_ID,
+                caption=text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML,
+            )
+            sent_msg_id = new_msg.message_id
 
-    # Отправляем сообщение с запросом и сохраняем его ID
-    sent_msg = await callback.message.answer(
-        f"📦 <b>Добавление трек-номера для заказа #{order_id}</b>\n\n"
-        f"Введите трек-номер для отслеживания:",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML,
-    )
-    await state.update_data(tracking_prompt_message_id=sent_msg.message_id)
+    await state.update_data(tracking_prompt_message_id=sent_msg_id)
     await callback.answer()
 
 
@@ -630,13 +672,11 @@ async def back_to_orders_list_callback(callback: CallbackQuery, state: FSMContex
 # ==================== ОБРАБОТКА ВВОДА ТРЕК-НОМЕРА ====================
 @admin_router.message(StateFilter(AdminOrdersState.adding_tracking), F.text, IsAdmin())
 async def process_tracking_number(message: Message, state: FSMContext):
-    """Сохранение трек-номера"""
+    """Сохранение трек-номера (редактирование сообщения обратно в карточку)"""
     from db import get_order_by_id, notify_user_safe
 
     data = await state.get_data()
     order_id = data.get("tracking_order_id")
-    status_filter = data.get("orders_filter", None)
-    page = data.get("orders_page", 0)
     prompt_msg_id = data.get("tracking_prompt_message_id")
 
     if not order_id:
@@ -666,39 +706,32 @@ async def process_tracking_number(message: Message, state: FSMContext):
                 text=notify_text,
             )
 
-        # Удаляем сообщение с запросом трек-номера, если оно есть
-        if prompt_msg_id:
-            try:
-                await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
-            except Exception:
-                pass
-            await state.update_data(tracking_prompt_message_id=None)
-
         # Удаляем сообщение пользователя с трек-номером
         try:
             await message.delete()
         except Exception:
             pass
 
-        # Одно сообщение: подтверждение + кнопка возврата к заказу
-        if notification_sent:
-            status_line = "✅ Клиент уведомлён"
-        else:
-            status_line = "⚠️ Клиент не уведомлён (заблокировал бота?)"
+        # Редактируем сообщение с запросом обратно в карточку заказа
+        try:
+            await show_order_detail(message, state, order_id, target_message_id=prompt_msg_id)
+        except Exception as e:
+            logger.error(f"process_tracking_number: show_order_detail failed: {e}")
+            # Если не удалось отредактировать, просто удаляем запрос
+            if prompt_msg_id:
+                try:
+                    await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
+                except Exception:
+                    pass
 
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="📋 Вернуться к заказу", callback_data=f"back_to_order_{order_id}")]
-            ]
-        )
-
-        await message.answer(
-            f"✅ <b>Трек-номер для заказа #{order_id} добавлен!</b>\n"
-            f"📦 {escape_html(tracking_number)}\n\n"
-            f"{status_line}",
-            reply_markup=keyboard,
+        # Отправляем короткое уведомление об успехе (удаляется через 3 сек)
+        status_line = "✅ Клиент уведомлён" if notification_sent else "⚠️ Клиент не уведомлён"
+        success_msg = await message.answer(
+            f"✅ Трек-номер добавлен!\n{status_line}",
             parse_mode=ParseMode.HTML,
         )
+        # Запускаем удаление уведомления в фоне
+        asyncio.create_task(_delete_message_after_delay(success_msg, 3))
 
     except Exception as e:
         logger.error(f"Error adding tracking: {e}", exc_info=True)
@@ -709,6 +742,13 @@ async def process_tracking_number(message: Message, state: FSMContext):
 
     await state.clear()
 
+async def _delete_message_after_delay(message: Message, delay: int = 3):
+       """Удаляет сообщение через указанное время"""
+       await asyncio.sleep(delay)
+       try:
+           await message.delete()
+       except Exception:
+           pass
 
 # ==================== ЕСЛИ НЕ АДМИН ====================
 @admin_router.message(Command("admin"))
@@ -957,36 +997,54 @@ async def orders_page_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@admin_router.callback_query(StateFilter(AdminOrdersState.adding_tracking), F.data == "admin_back_to_order", IsAdmin())
-async def admin_back_to_order(callback: CallbackQuery, state: FSMContext):
+@admin_router.callback_query(StateFilter(AdminOrdersState.adding_tracking), F.data == "adminbacktoorder", IsAdmin())
+async def adminbacktoorder(callback: CallbackQuery, state: FSMContext):
     """Возврат к заказу без добавления трек-номера"""
+    await callback.answer()
     data = await state.get_data()
     order_id = data.get("tracking_order_id")
+    prompt_msg_id = data.get("tracking_prompt_message_id")
     await state.clear()
     
     if order_id:
-        await show_order_detail(callback.message, state, order_id)
+        try:
+            await show_order_detail(callback.message, state, order_id, target_message_id=prompt_msg_id)
+        except Exception as e:
+            logger.error(f"adminbacktoorder: show_order_detail failed: {e}")
+            try:
+                await callback.message.edit_text("❌ Не удалось вернуться к заказу.")
+            except Exception:
+                await callback.message.answer("❌ Не удалось вернуться к заказу.")
     else:
         try:
             await callback.message.edit_text("❌ Заказ не найден.")
         except Exception:
             await callback.message.answer("❌ Заказ не найден.")
-    await callback.answer()
     
     
     
 # ==================== РУЧНАЯ ОЧИСТКА ТРЕК-НОМЕРА ====================
 @admin_router.callback_query(F.data.startswith("clear_tracking_"), IsAdmin())
 async def clear_tracking_callback(callback: CallbackQuery, state: FSMContext):
-    """Запрос подтверждения на очистку трек-номера заказа"""
+    """Запрос подтверждения на очистку трек-номера заказа (редактирование с баннером)"""
     order_id = int(callback.data.split("_")[2])
     order = await get_order_by_id(order_id)
     
-    # order["tracking_number"] — это tracking_number в get_order_by_id
     if not order or not order["tracking_number"]:
         await callback.answer("ℹ️ У этого заказа уже нет трек-номера.", show_alert=True)
         return
 
+    product_name = order["name"] or "Товар"
+    tracking_number = order["tracking_number"]
+
+    text = (
+        f"🗑 <b>Подтвердите очистку трек-номера</b>\n"
+        f"━━━━━━━━━━━━━\n\n"
+        f"🆔 <b>Заказ:</b> #{order_id}\n"
+        f"🛒 <b>Товар:</b> {escape_html(product_name)}\n"
+        f"📦 <b>Текущий трек:</b> <code>{escape_html(tracking_number)}</code>\n\n"
+        f"⚠️ Вы уверены, что хотите удалить его?"
+    )
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Да, очистить", callback_data=f"confirm_clear_tracking_{order_id}")],
@@ -994,39 +1052,40 @@ async def clear_tracking_callback(callback: CallbackQuery, state: FSMContext):
         ]
     )
     
-    text = (
-        f"🗑 <b>Подтвердите очистку трек-номера</b>\n\n"
-        f"Заказ #{order_id}\n"
-        f"Текущий трек-номер: <code>{escape_html(order['tracking_number'])}</code>\n\n"
-        f"Вы уверены, что хотите удалить его?"
-    )
-    
-    # Правило 2: try/except с logger.warning и фоллбеком на answer()
+    # Редактируем текущее сообщение с баннером
     try:
-        await callback.message.edit_text(
-            text,
+        await callback.message.bot.edit_message_media(
+            chat_id=callback.message.chat.id,
+            message_id=callback.message.message_id,
+            media=InputMediaPhoto(
+                media=ADMIN_NAV_BANNER_ID,
+                caption=text,
+                parse_mode=ParseMode.HTML,
+            ),
             reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
         )
     except Exception as e:
-        logger.warning(f"clear_tracking_callback edit failed: {e}, deleting old and sending new")
-        # Удаляем старое фото-сообщение
-        try:
-            await callback.message.delete()
-        except Exception:
+        error_text = str(e).lower()
+        if "message is not modified" in error_text:
             pass
-        # Отправляем новое текстовое
-        await callback.message.answer(
-            text,
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
+        else:
+            logger.warning(f"clear_tracking_callback edit failed: {e}, sending new")
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            await callback.message.answer_photo(
+                photo=ADMIN_NAV_BANNER_ID,
+                caption=text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML,
+            )
     await callback.answer()
 
 
 @admin_router.callback_query(F.data.startswith("confirm_clear_tracking_"), IsAdmin())
 async def confirm_clear_tracking_callback(callback: CallbackQuery, state: FSMContext):
-    """Финальное подтверждение и очистка трек-номера с уведомлением клиента"""
+    """Финальное подтверждение и очистка трек-номера с уведомлением клиента (редактирование с баннером)"""
     order_id = int(callback.data.split("_")[3])
     
     # 1. Получаем user_id для уведомления
@@ -1036,7 +1095,7 @@ async def confirm_clear_tracking_callback(callback: CallbackQuery, state: FSMCon
     # 2. Очищаем трек-номер в БД
     await clear_order_tracking_number(order_id)
 
-    # 3. Уведомляем клиента (Правило 4: notify_user_safe не уронит бота)
+    # 3. Уведомляем клиента
     if user_id:
         notify_text = (
             f"⚠️ <b>Внимание: трек-номер для заказа #{order_id} аннулирован.</b>\n\n"
@@ -1046,40 +1105,50 @@ async def confirm_clear_tracking_callback(callback: CallbackQuery, state: FSMCon
         )
         await notify_user_safe(callback.bot, chat_id=user_id, text=notify_text)
 
-    # 4. Подтверждение админу и возврат к заказу
+    # 4. Подтверждение админу
     await callback.answer("✅ Трек-номер успешно очищен!", show_alert=True)
     
-    text_response = "✅ Трек-номер очищен. Клиент уведомлён об аннулировании."
+    text_response = "✅ <b>Трек-номер очищен.</b>\nКлиент уведомлён об аннулировании."
     keyboard_response = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📋 Вернуться к заказу", callback_data=f"back_to_order_{order_id}")]
         ]
     )
     
-    # Правило 2: try/except с logger.warning и фоллбеком на answer()
+    # Редактируем текущее сообщение с баннером
     try:
-        await callback.message.edit_text(
-            text_response,
+        await callback.message.bot.edit_message_media(
+            chat_id=callback.message.chat.id,
+            message_id=callback.message.message_id,
+            media=InputMediaPhoto(
+                media=ADMIN_NAV_BANNER_ID,
+                caption=text_response,
+                parse_mode=ParseMode.HTML,
+            ),
             reply_markup=keyboard_response,
-            parse_mode=ParseMode.HTML,
         )
     except Exception as e:
-        logger.warning(f"confirm_clear_tracking_callback edit failed: {e}, deleting old and sending new")
-        # Удаляем старое фото-сообщение
-        try:
-            await callback.message.delete()
-        except Exception:
+        error_text = str(e).lower()
+        if "message is not modified" in error_text:
             pass
-        # Отправляем новое текстовое
-        await callback.message.answer(
-            text_response,
-            reply_markup=keyboard_response,
-            parse_mode=ParseMode.HTML,
-        )
+        else:
+            logger.warning(f"confirm_clear_tracking_callback edit failed: {e}, sending new")
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            await callback.message.answer_photo(
+                photo=ADMIN_NAV_BANNER_ID,
+                caption=text_response,
+                reply_markup=keyboard_response,
+                parse_mode=ParseMode.HTML,
+            )
         
         
-async def show_order_detail(message: Message, state: FSMContext, order_id: int):
-    """Показать подробную карточку конкретного заказа"""
+async def show_order_detail(message: Message, state: FSMContext, order_id: int, target_message_id: int = None):
+    """Показать подробную карточку конкретного заказа.
+    Если target_message_id передан, редактируем это сообщение, иначе message.message_id.
+    """
     from db import get_order_by_id, get_product_by_id, format_moscow_time
     
     order = await get_order_by_id(order_id)
@@ -1149,6 +1218,9 @@ async def show_order_detail(message: Message, state: FSMContext, order_id: int):
     # Формирование клавиатуры
     keyboard_rows = []
     keyboard_rows.append([InlineKeyboardButton(text="🔄 Изменить статус", callback_data=f"change_status_{o_id}")])
+    # Если статус "отправлен" и трек отсутствует — показываем кнопку добавления
+    if status == "отправлен" and not tracking_number:
+        keyboard_rows.append([InlineKeyboardButton(text="➕ Добавить трек-номер", callback_data=f"add_tracking_{o_id}")])
     if tracking_number:
         keyboard_rows.append([InlineKeyboardButton(text="🗑 Очистить трек", callback_data=f"clear_tracking_{o_id}")])
     
@@ -1165,20 +1237,29 @@ async def show_order_detail(message: Message, state: FSMContext, order_id: int):
         if product and len(product) > 7:
             product_image = product["image_file_id"]
 
+    # Используем target_message_id, если передан, иначе message.message_id
+    edit_msg_id = target_message_id or message.message_id
+
     try:
         if product_image:
             await message.bot.edit_message_media(
                 chat_id=message.chat.id,
-                message_id=message.message_id,
+                message_id=edit_msg_id,
                 media=InputMediaPhoto(media=product_image, caption=text, parse_mode=ParseMode.HTML),
                 reply_markup=keyboard,
             )
         else:
-            await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+            await message.bot.edit_message_text(
+                text,
+                chat_id=message.chat.id,
+                message_id=edit_msg_id,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML,
+            )
     except Exception as e:
         logger.warning(f"show_order_detail edit failed: {e}, fallback to new message")
         try:
-            await message.delete()
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=edit_msg_id)
         except Exception:
             pass
         
