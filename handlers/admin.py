@@ -1182,7 +1182,8 @@ async def show_order_detail(message: Message, state: FSMContext, order_id: int, 
     if tracking_number:
         text += f"\n📦 <b>ТРЕК-НОМЕР</b>\n🔹 {escape_html(tracking_number)}\n"
     if comment:
-        text += f"\n📝 <b>КОММЕНТАРИЙ</b>\n🔹 {escape_html(comment)}\n"
+        short_comment = comment[:250] + ("..." if len(comment) > 250 else "")
+        text += f"\n📝 <b>КОММЕНТАРИЙ</b>\n🔹 {escape_html(short_comment)}\n"
 
     text += (
         f"\n━━━━━━━━━━━━━\n"
