@@ -537,7 +537,6 @@ async def product_add_quantity(message: Message, state: FSMContext):
     )
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⏩ Пропустить", callback_data="photo_skip")],
             [InlineKeyboardButton(text="⬅️ Отмена", callback_data="product_add_cancel")],
         ]
     )
@@ -712,63 +711,6 @@ async def save_product(message: Message, state: FSMContext, callback: CallbackQu
             await callback.message.answer(error_text, parse_mode=ParseMode.HTML)
         else:
             await message.answer(error_text, parse_mode=ParseMode.HTML)
-
-
-
-
-@router.callback_query(
-    StateFilter(AdminProductState.adding_photo),
-    F.data == "photo_skip",
-    IsAdmin(),
-)
-async def product_add_photo_skip(callback: CallbackQuery, state: FSMContext):
-    """Пропустить добавление фото и показать превью"""
-    data = await state.get_data()
-    product_data = data.get("product_data", {})
-
-    # Прогрессивный текст: показываем все заполненные поля
-    desc = product_data.get('description', 'Не указано')
-    desc_short = desc[:150] + ('...' if len(desc) > 150 else '')
-
-    text = (
-        f"📌 <b>Название:</b> {escape_html(product_data.get('name', 'Не указано'))}\n"
-        f"📝 <b>Описание:</b> {escape_html(desc_short)}\n"
-        f"💰 <b>Цена:</b> {product_data.get('price', 'Не указана')} ₽\n"
-        f"🏷️ <b>Категория:</b> {escape_html(product_data.get('category', 'Не выбрана'))}\n"
-        f"📦 <b>Количество:</b> {product_data.get('quantity', 'Не указано')} шт.\n"
-        f"📷 <b>Фото:</b> ❌ не добавлено\n\n"
-        f"✅ <b>Товар готов к созданию!</b>"
-    )
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Создать", callback_data="product_add_confirm")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="product_add_cancel")]
-        ]
-    )
-
-    # Обновляем сообщение с баннером MANIA
-    try:
-        await callback.bot.edit_message_media(
-            chat_id=callback.message.chat.id,
-            message_id=data.get("add_bot_message_id"),
-            media=InputMediaPhoto(
-                media=ADMIN_NAV_BANNER_ID,
-                caption=text,
-                parse_mode=ParseMode.HTML,
-            ),
-            reply_markup=keyboard,
-        )
-    except Exception:
-        # Fallback: отправляем новое сообщение
-        await callback.message.answer_photo(
-            photo=ADMIN_NAV_BANNER_ID,
-            caption=text,
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-        )
-
-    await callback.answer()
 
 
 @router.callback_query(
@@ -1564,8 +1506,8 @@ async def product_edit_value(message: Message, state: FSMContext):
                 return
             update_data["description"] = value
         elif field == "category":
-            if len(value) < 2:
-                await message.answer("❌ Категория слишком короткая.")
+            if value not in CATEGORY_MAP.values():
+                await message.answer(f"❌ Некорректная категория. Допустимые: {', '.join(CATEGORY_MAP.values())}")
                 return
             update_data["category"] = value
 

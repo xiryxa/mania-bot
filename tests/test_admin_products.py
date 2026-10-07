@@ -44,16 +44,16 @@ def mock_callback():
     callback.message.chat = MagicMock()
     callback.message.chat.id = 12345
     callback.message.message_id = 999
-    
+
     callback.message.answer = AsyncMock()
     callback.message.delete = AsyncMock()
     callback.message.answer_photo = AsyncMock()
-    
+
     callback.bot = AsyncMock()
     callback.bot.edit_message_media = AsyncMock()
     callback.bot.send_photo = AsyncMock()
     callback.bot.delete_message = AsyncMock()
-    
+
     callback.message.bot = callback.bot
     callback.answer = AsyncMock()
     return callback
@@ -66,16 +66,16 @@ def mock_message():
     message.chat = MagicMock()
     message.chat.id = 12345
     message.message_id = 999
-    
+
     message.delete = AsyncMock()
     message.answer = AsyncMock()
     message.answer_photo = AsyncMock()
-    
+
     message.bot = AsyncMock()
     message.bot.edit_message_media = AsyncMock()
     message.bot.send_photo = AsyncMock()
     message.bot.delete_message = AsyncMock()
-    
+
     return message
 
 
@@ -102,7 +102,7 @@ async def test_add_product_fsm_cancel_preserves_list_context(mock_callback, mock
     assert "admin_products" in call_args
     assert "product_data" not in call_args
     assert "add_return_callback" not in call_args
-    
+
     mock_state.set_state.assert_called_once_with(None)
     mock_show.assert_called_once()
 
@@ -125,13 +125,13 @@ async def test_edit_product_value_updates_cache_as_dict(mock_get_product, mock_u
 
     mock_update_product.assert_called_once()
     mock_state.update_data.assert_called_once()
-    
+
     update_call_kwargs = mock_state.update_data.call_args[1]
     updated_products = update_call_kwargs["admin_products"]
-    
+
     assert len(updated_products) == 1
     updated_item = updated_products[0]
-    
+
     # Усиленные проверки: элемент должен быть dict, и все остальные поля должны сохраниться
     assert isinstance(updated_item, dict), "Элемент кэша должен быть преобразован в dict"
     assert updated_item["price"] == 1500
@@ -147,7 +147,7 @@ async def test_add_product_full_cycle_with_photo_and_confirm(mock_add_product, m
     mock_callback.data = "product_add_confirm"
     mock_state.get_data.return_value = {
         "product_data": {
-            "name": "Test", "price": 100, "category": "goose", 
+            "name": "Test", "price": 100, "category": "goose",
             "quantity": 1, "image_file_id": "file_123"
         },
         "add_bot_message_id": 999
@@ -159,7 +159,7 @@ async def test_add_product_full_cycle_with_photo_and_confirm(mock_add_product, m
     mock_add_product.assert_called_once()
     call_kwargs = mock_add_product.call_args[1]
     assert call_kwargs["image_file_id"] == "file_123"
-    
+
     mock_state.clear.assert_called_once()
     mock_state.set_state.assert_called_once_with(AdminProductState.selecting_action)
 
@@ -179,14 +179,14 @@ async def test_pagination_context_preserved_in_text_list(mock_render_banner, moc
 
     mock_render_banner.assert_called_once()
     keyboard = mock_render_banner.call_args[0][2]
-    
+
     return_btn = None
     for row in keyboard.inline_keyboard:
         for btn in row:
             if btn.text == "🖼️ Вернуться к просмотру с фото":
                 return_btn = btn
                 break
-                
+
     assert return_btn is not None
     assert return_btn.callback_data == "product_page_admin_2"
 
@@ -218,7 +218,7 @@ async def test_delete_and_restore_product_flow(mock_get_product, mock_delete_pro
     """Тест 6: Delete + Restore проходят через handler-уровень и вызывают нужные DB-функции"""
     mock_product = MockSqliteRow(id=1, name="Test", price=100, category="C", quantity=5, ozon_url=None, image_file_id=None)
     mock_get_product.return_value = mock_product
-    
+
     # --- Тест удаления ---
     mock_callback.data = "delete_yes_1"
     mock_state.get_data.return_value = {"delete_return_callback": "admin_products"}
@@ -241,3 +241,32 @@ async def test_delete_and_restore_product_flow(mock_get_product, mock_delete_pro
 
     mock_restore_product.assert_called_once_with(1)
     assert mock_callback.bot.edit_message_media.called or mock_callback.message.answer_photo.called
+
+
+
+
+@pytest.mark.asyncio
+@patch("handlers.admin_products.update_product")
+@patch("handlers.admin_products.get_product_by_id")
+async def test_edit_product_category_invalid_input_rejection(mock_get_product, mock_update_product, mock_message, mock_state):
+    """Тест: недопустимая категория при текстовом редактировании отклоняется"""
+    mock_message.text = "недопустимая_категория"
+    mock_state.get_data.return_value = {
+        "editing_product_id": 1,
+        "editing_field": "category"
+    }
+    mock_get_product.return_value = MockSqliteRow(
+        id=1, name="Test", description="D", price=100,
+        category="гусь", quantity=5, ozon_url=None, image_file_id=None
+    )
+
+    await product_edit_value(mock_message, mock_state)
+
+    # Проверяем, что админ получил сообщение об ошибке
+    mock_message.answer.assert_called_once()
+    assert "Некорректная категория" in mock_message.answer.call_args[0][0]
+    assert "гусь" in mock_message.answer.call_args[0][0]
+    assert "утка" in mock_message.answer.call_args[0][0]
+
+    # Проверяем, что update_product НЕ вызван
+    mock_update_product.assert_not_called()
