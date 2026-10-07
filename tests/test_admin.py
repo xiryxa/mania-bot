@@ -429,3 +429,24 @@ async def test_add_tracking_nonexistent_order(mock_get_order, mock_callback, moc
     await add_tracking_callback(mock_callback, mock_state)
 
     mock_callback.answer.assert_called_once_with("❌ Заказ не найден.", show_alert=True)
+
+
+# ==============================================================================
+# 19. Добавление трека: Нетекстовое сообщение
+# ==============================================================================
+@pytest.mark.asyncio
+async def test_process_tracking_number_rejects_non_text_input(mock_message, mock_state):
+    from handlers.admin import process_tracking_number_invalid_type
+
+    # Эмулируем сообщение без текста (например, фото)
+    mock_message.text = None
+    mock_message.content_type = "photo"
+
+    await process_tracking_number_invalid_type(mock_message, mock_state)
+
+    # Проверяем, что админ получил понятное сообщение об ошибке
+    mock_message.answer.assert_called_once()
+    assert "введите трек-номер текстом" in mock_message.answer.call_args.args[0]
+
+    # Проверяем, что состояние НЕ очищается (админ остаётся в FSM)
+    mock_state.clear.assert_not_called()

@@ -734,6 +734,13 @@ async def process_tracking_number(message: Message, state: FSMContext):
 
     await state.clear()
 
+
+@admin_router.message(StateFilter(AdminOrdersState.adding_tracking), ~F.text, IsAdmin())
+async def process_tracking_number_invalid_type(message: Message, state: FSMContext):
+    """Обработка нетекстовых сообщений при ожидании трек-номера"""
+    await message.answer("❌ Пожалуйста, введите трек-номер текстом (не фото или документ).")
+
+
 async def _delete_message_after_delay(message: Message, delay: int = 3):
        """Удаляет сообщение через указанное время"""
        await asyncio.sleep(delay)
