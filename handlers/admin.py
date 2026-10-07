@@ -713,16 +713,8 @@ async def process_tracking_number(message: Message, state: FSMContext):
             pass
 
         # Редактируем сообщение с запросом обратно в карточку заказа
-        try:
-            await show_order_detail(message, state, order_id, target_message_id=prompt_msg_id)
-        except Exception as e:
-            logger.error(f"process_tracking_number: show_order_detail failed: {e}")
-            # Если не удалось отредактировать, просто удаляем запрос
-            if prompt_msg_id:
-                try:
-                    await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
-                except Exception:
-                    pass
+        # Fallback уже встроен в show_order_detail
+        await show_order_detail(message, state, order_id, target_message_id=prompt_msg_id)
 
         # Отправляем короткое уведомление об успехе (удаляется через 3 сек)
         status_line = "✅ Клиент уведомлён" if notification_sent else "⚠️ Клиент не уведомлён"

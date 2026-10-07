@@ -347,22 +347,26 @@ async def test_process_tracking_number_rejects_short_input(mock_update_tracking,
 # 14. Добавление трека: Текущее поведение при ошибке show_order_detail
 # ==============================================================================
 @pytest.mark.asyncio
-@patch("handlers.admin.show_order_detail", new_callable=AsyncMock)
 @patch("handlers.admin.notify_user_safe", new_callable=AsyncMock)
+@patch("handlers.admin.show_order_detail", new_callable=AsyncMock)
 @patch("handlers.admin.update_order_tracking_number", new_callable=AsyncMock)
-@patch("db.get_order_by_id")
+@patch("handlers.admin.get_order_by_id")
 async def test_process_tracking_number_current_fallback_on_edit_error(mock_get_order, mock_update_tracking, mock_notify, mock_show_detail, mock_message, mock_state):
     mock_state.get_data.return_value = {"tracking_order_id": 1, "tracking_prompt_message_id": 456}
     mock_get_order.return_value = make_mock_order()
 
-    mock_show_detail.side_effect = Exception("Edit failed")
+    # Эмулируем полный сбой рендеринга (исключение пробрасывается во внешний except)
+    mock_show_detail.side_effect = Exception("Complete render failure")
 
     await process_tracking_number(mock_message, mock_state)
 
-    mock_message.bot.delete_message.assert_called_once_with(chat_id=123, message_id=456)
+    # Проверяем, что сработал внешний обработчик ошибок и админ получил уведомление о сбое
     mock_message.answer.assert_called_once()
-    assert "Трек-номер добавлен" in mock_message.answer.call_args.args[0]
-    assert mock_show_detail.call_count == 1
+    call_args = mock_message.answer.call_args
+    assert "Ошибка при добавлении трек-номера" in call_args.args[0]
+
+    # Проверяем, что ложное сообщение об успехе НЕ было отправлено
+    assert "Трек-номер добавлен!" not in call_args.args[0]
 
 
 # ==============================================================================
