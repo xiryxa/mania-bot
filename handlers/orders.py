@@ -427,61 +427,64 @@ async def create_order_from_state(message: Message, state: FSMContext, user_id: 
 
         from handlers.admin import ADMIN_IDS
 
-        admin_chat_id = ADMIN_IDS[0] if ADMIN_IDS else user_id
-
         new_stock = await get_product_stock(product_id)
         product_name = product['name'] if product else "Удаленный товар"
         product_price = product['price'] if product else 0
         total_price = requested_quantity * product_price
 
-        admin_text = (
-            f"🆕 <b>Новый заказ!</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👤 <b>Клиент:</b> {escape_html(user['fullname'])}\n"
-            f"📞 <b>Телефон:</b> {escape_html(user['phone'])}\n"
-            f"📧 <b>Email:</b> {escape_html(user['email'] or 'не указан')}\n"
-            f"🏙️ <b>Город:</b> {escape_html(user['city'] or 'не указан')}\n"
-            f"🛒 <b>Товар:</b> {escape_html(product_name)}\n"
-            f"📦 <b>Количество:</b> {requested_quantity}\n"
-            f"💰 <b>Цена за шт.:</b> {product_price} ₽\n"
-            f"💵 <b>Сумма:</b> {total_price} ₽\n"
-            f"🚚 <b>Доставка:</b> {delivery_method}\n"
-            f"📍 <b>Адрес:</b> {escape_html(address)}\n"
-        )
-        if comment:
-            admin_text += f"📝 <b>Комментарий:</b> {escape_html(comment)}\n"
-        admin_text += f"📊 <b>Остаток на складе:</b> {new_stock} шт.\n"
-        admin_text += f"━━━━━━━━━━━━━━━━━━━━━"
+        if not ADMIN_IDS:
+            logger.error("ADMIN_IDS is not configured. Admin notification skipped.")
+        else:
+            admin_chat_id = ADMIN_IDS[0]
 
-        await message.bot.send_message(chat_id=admin_chat_id, text=admin_text, parse_mode=ParseMode.HTML)
+            admin_text = (
+                f"🆕 <b>Новый заказ!</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"👤 <b>Клиент:</b> {escape_html(user['fullname'])}\n"
+                f"📞 <b>Телефон:</b> {escape_html(user['phone'])}\n"
+                f"📧 <b>Email:</b> {escape_html(user['email'] or 'не указан')}\n"
+                f"🏙️ <b>Город:</b> {escape_html(user['city'] or 'не указан')}\n"
+                f"🛒 <b>Товар:</b> {escape_html(product_name)}\n"
+                f"📦 <b>Количество:</b> {requested_quantity}\n"
+                f"💰 <b>Цена за шт.:</b> {product_price} ₽\n"
+                f"💵 <b>Сумма:</b> {total_price} ₽\n"
+                f"🚚 <b>Доставка:</b> {delivery_method}\n"
+                f"📍 <b>Адрес:</b> {escape_html(address)}\n"
+            )
+            if comment:
+                admin_text += f"📝 <b>Комментарий:</b> {escape_html(comment)}\n"
+            admin_text += f"📊 <b>Остаток на складе:</b> {new_stock} шт.\n"
+            admin_text += f"━━━━━━━━━━━━━━━━━━━━━"
 
-        if new_stock == 0:
-            keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="✏️ Перейти к редактированию", callback_data=f"edit_select_{product_id}")],
-                    [InlineKeyboardButton(text="📦 Управление товарами", callback_data="admin_products")],
-                ]
-            )
-            await message.bot.send_message(
-                chat_id=admin_chat_id,
-                text=(
-                    f"⚠️ <b>Товар закончился на складе!</b>\n\n"
-                    f"📦 <b>Товар:</b> {escape_html(product_name)}\n"
-                    f"🆔 ID: <code>{product_id}</code>\n\n"
-                    f"Чтобы изменить количество, перейдите в редактирование товара."
-                ),
-                reply_markup=keyboard,
-                parse_mode=ParseMode.HTML,
-            )
+            await message.bot.send_message(chat_id=admin_chat_id, text=admin_text, parse_mode=ParseMode.HTML)
 
-        if new_stock > 0 and new_stock <= LOW_STOCK_THRESHOLD:
-            await check_and_notify_low_stock(
-                product_id=product_id,
-                product_name=product_name,
-                new_stock=new_stock,
-                bot=message.bot,
-                admin_chat_id=admin_chat_id,
-            )
+            if new_stock == 0:
+                keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text="✏️ Перейти к редактированию", callback_data=f"edit_select_{product_id}")],
+                        [InlineKeyboardButton(text="📦 Управление товарами", callback_data="admin_products")],
+                    ]
+                )
+                await message.bot.send_message(
+                    chat_id=admin_chat_id,
+                    text=(
+                        f"⚠️ <b>Товар закончился на складе!</b>\n\n"
+                        f"📦 <b>Товар:</b> {escape_html(product_name)}\n"
+                        f"🆔 ID: <code>{product_id}</code>\n\n"
+                        f"Чтобы изменить количество, перейдите в редактирование товара."
+                    ),
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.HTML,
+                )
+
+            if new_stock > 0 and new_stock <= LOW_STOCK_THRESHOLD:
+                await check_and_notify_low_stock(
+                    product_id=product_id,
+                    product_name=product_name,
+                    new_stock=new_stock,
+                    bot=message.bot,
+                    admin_chat_id=admin_chat_id,
+                )
 
     except Exception as e:
         logger.error(f"Failed to send notification to admin: {e}", exc_info=True)
