@@ -532,11 +532,12 @@ async def product_add_quantity(message: Message, state: FSMContext):
         f"💰 <b>Цена:</b> {product_data.get('price', 'Не указана')} ₽\n"
         f"🏷️ <b>Категория:</b> {escape_html(product_data.get('category', 'Не выбрана'))}\n"
         f"📦 <b>Количество:</b> {quantity} шт.\n\n"
-        f"📸 <b>Добавьте фото товара</b>\n\n"
-        f"Отправьте фото или нажмите «Пропустить»:"
+        f"🔗 <b>Введите ссылку на Ozon</b>\n\n"
+        f"Отправьте ссылку или нажмите «Пропустить»:"
     )
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="⏩ Пропустить", callback_data="ozon_skip")],
             [InlineKeyboardButton(text="⬅️ Отмена", callback_data="product_add_cancel")],
         ]
     )
@@ -544,7 +545,7 @@ async def product_add_quantity(message: Message, state: FSMContext):
     await message.delete()
     await _update_add_flow_message(message.bot, message.chat.id, data.get("add_bot_message_id"), text, keyboard, state)
     await state.update_data(product_data=product_data)
-    await state.set_state(AdminProductState.adding_photo)
+    await state.set_state(AdminProductState.adding_ozon)
 
 
 # Вспомогательная функция внутри файла (добавь её перед product_add_name или в начало файла после импортов)
@@ -652,7 +653,8 @@ async def save_product(message: Message, state: FSMContext, callback: CallbackQu
             price=product_data.get("price"),
             category=product_data.get("category"),
             quantity=product_data.get("quantity", 0),
-            ozon_url=None,
+            ozon_url=product_data.get("ozon_url"),
+            youtube_url=product_data.get("youtube_url"),
             image_file_id=product_data.get("image_file_id"),
         )
 
@@ -664,6 +666,15 @@ async def save_product(message: Message, state: FSMContext, callback: CallbackQu
             f"🏷️ <b>Категория:</b> {escape_html(product_data.get('category'))}\n"
             f"📦 <b>В наличии:</b> {product_data.get('quantity', 0)} шт.\n"
         )
+
+        ozon_url = product_data.get("ozon_url")
+        if ozon_url:
+            text += f"🛍 <b>Ozon:</b> {escape_html(ozon_url)}\n"
+
+        youtube_url = product_data.get("youtube_url")
+        if youtube_url:
+            text += f"▶️ <b>YouTube:</b> {escape_html(youtube_url)}\n"
+
         if product_data.get("image_file_id"):
             text += "🖼️ <b>Фото:</b> добавлено\n"
 
@@ -724,6 +735,171 @@ async def product_add_confirm(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@router.message(StateFilter(AdminProductState.adding_ozon), F.text, IsAdmin())
+async def product_add_ozon(message: Message, state: FSMContext):
+    value = message.text.strip()
+    if not (value.startswith("http://") or value.startswith("https://")):
+        await message.answer("❌ Введите корректную ссылку (начинается с http:// или https://).")
+        return
+
+    data = await state.get_data()
+    product_data = data.get("product_data", {})
+    product_data["ozon_url"] = value
+    await state.update_data(product_data=product_data)
+
+    text = (
+        f"📌 <b>Название:</b> {escape_html(product_data.get('name', 'Не указано'))}\n"
+        f"📝 <b>Описание:</b> {escape_html(product_data.get('description', 'Не указано')[:100])}...\n"
+        f"💰 <b>Цена:</b> {product_data.get('price', 'Не указана')} ₽\n"
+        f"🏷️ <b>Категория:</b> {escape_html(product_data.get('category', 'Не выбрана'))}\n"
+        f"📦 <b>Количество:</b> {product_data.get('quantity', 0)} шт.\n"
+        f"🛍 <b>Ozon:</b> {escape_html(value)}\n\n"
+        f"🔗 <b>Введите ссылку на YouTube обзор</b>\n\n"
+        f"Отправьте ссылку или нажмите «Пропустить»:"
+    )
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⏩ Пропустить", callback_data="youtube_skip")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="product_add_cancel")],
+        ]
+    )
+    await message.delete()
+    await _update_add_flow_message(message.bot, message.chat.id, data.get("add_bot_message_id"), text, keyboard, state)
+    await state.set_state(AdminProductState.adding_youtube)
+
+@router.callback_query(StateFilter(AdminProductState.adding_ozon), F.data == "ozon_skip", IsAdmin())
+async def product_add_ozon_skip(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    product_data = data.get("product_data", {})
+    product_data["ozon_url"] = None
+    await state.update_data(product_data=product_data)
+
+    text = (
+        f"📌 <b>Название:</b> {escape_html(product_data.get('name', 'Не указано'))}\n"
+        f"📝 <b>Описание:</b> {escape_html(product_data.get('description', 'Не указано')[:100])}...\n"
+        f"💰 <b>Цена:</b> {product_data.get('price', 'Не указана')} ₽\n"
+        f"🏷️ <b>Категория:</b> {escape_html(product_data.get('category', 'Не выбрана'))}\n"
+        f"📦 <b>Количество:</b> {product_data.get('quantity', 0)} шт.\n"
+        f"🛍 <b>Ozon:</b> ❌ пропущена\n\n"
+        f"🔗 <b>Введите ссылку на YouTube обзор</b>\n\n"
+        f"Отправьте ссылку или нажмите «Пропустить»:"
+    )
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⏩ Пропустить", callback_data="youtube_skip")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="product_add_cancel")],
+        ]
+    )
+    await _update_add_flow_message(callback.bot, callback.message.chat.id, data.get("add_bot_message_id"), text, keyboard, state)
+    await state.set_state(AdminProductState.adding_youtube)
+    await callback.answer()
+
+@router.message(StateFilter(AdminProductState.adding_youtube), F.text, IsAdmin())
+async def product_add_youtube(message: Message, state: FSMContext):
+    value = message.text.strip()
+    if not (value.startswith("http://") or value.startswith("https://")):
+        await message.answer("❌ Введите корректную ссылку (начинается с http:// или https://).")
+        return
+
+    data = await state.get_data()
+    product_data = data.get("product_data", {})
+    product_data["youtube_url"] = value
+    await state.update_data(product_data=product_data)
+
+    text = (
+        f"📌 <b>Название:</b> {escape_html(product_data.get('name', 'Не указано'))}\n"
+        f"📝 <b>Описание:</b> {escape_html(product_data.get('description', 'Не указано')[:100])}...\n"
+        f"💰 <b>Цена:</b> {product_data.get('price', 'Не указана')} ₽\n"
+        f"🏷️ <b>Категория:</b> {escape_html(product_data.get('category', 'Не выбрана'))}\n"
+        f"📦 <b>Количество:</b> {product_data.get('quantity', 0)} шт.\n"
+        f"🛍 <b>Ozon:</b> {escape_html(product_data.get('ozon_url') or '❌ пропущена')}\n"
+        f"▶️ <b>YouTube:</b> {escape_html(value)}\n\n"
+        f"📸 <b>Добавьте фото товара</b>\n\n"
+        f"Отправьте фото:"
+    )
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⏩ Пропустить", callback_data="photo_skip")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="product_add_cancel")],
+        ]
+    )
+    await message.delete()
+    await _update_add_flow_message(message.bot, message.chat.id, data.get("add_bot_message_id"), text, keyboard, state)
+    await state.set_state(AdminProductState.adding_photo)
+
+@router.callback_query(StateFilter(AdminProductState.adding_youtube), F.data == "youtube_skip", IsAdmin())
+async def product_add_youtube_skip(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    product_data = data.get("product_data", {})
+    product_data["youtube_url"] = None
+    await state.update_data(product_data=product_data)
+
+    text = (
+        f"📌 <b>Название:</b> {escape_html(product_data.get('name', 'Не указано'))}\n"
+        f"📝 <b>Описание:</b> {escape_html(product_data.get('description', 'Не указано')[:100])}...\n"
+        f"💰 <b>Цена:</b> {product_data.get('price', 'Не указана')} ₽\n"
+        f"🏷️ <b>Категория:</b> {escape_html(product_data.get('category', 'Не выбрана'))}\n"
+        f"📦 <b>Количество:</b> {product_data.get('quantity', 0)} шт.\n"
+        f"🛍 <b>Ozon:</b> {'✅' if product_data.get('ozon_url') else '❌ пропущена'}\n"
+        f"▶️ <b>YouTube:</b> ❌ пропущена\n\n"
+        f"📸 <b>Добавьте фото товара</b>\n\n"
+        f"Отправьте фото:"
+    )
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⏩ Пропустить", callback_data="photo_skip")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="product_add_cancel")],
+        ]
+    )
+    await _update_add_flow_message(callback.bot, callback.message.chat.id, data.get("add_bot_message_id"), text, keyboard, state)
+    await state.set_state(AdminProductState.adding_photo)
+    await callback.answer()
+
+
+@router.callback_query(StateFilter(AdminProductState.adding_photo), F.data == "photo_skip", IsAdmin())
+async def product_add_photo_skip(callback: CallbackQuery, state: FSMContext):
+    """Пропустить добавление фото при создании нового товара"""
+    data = await state.get_data()
+    product_data = data.get("product_data", {})
+    product_data["image_file_id"] = None
+    await state.update_data(product_data=product_data)
+
+    # Формируем превью для подтверждения
+    desc = product_data.get('description', 'Не указано')
+    desc_short = desc[:150] + ('...' if len(desc) > 150 else '')
+
+    text = (
+        f"📌 <b>Название:</b> {escape_html(product_data.get('name', 'Не указано'))}\n"
+        f"📝 <b>Описание:</b> {escape_html(desc_short)}\n"
+        f"💰 <b>Цена:</b> {product_data.get('price', 'Не указана')} ₽\n"
+        f"🏷️ <b>Категория:</b> {escape_html(product_data.get('category', 'Не выбрана'))}\n"
+        f"📦 <b>Количество:</b> {product_data.get('quantity', 0)} шт.\n"
+    )
+    ozon_url = product_data.get("ozon_url")
+    if ozon_url:
+        text += f"🛍 <b>Ozon:</b> {escape_html(ozon_url)}\n"
+    else:
+        text += "🛍 <b>Ozon:</b> ❌ пропущена\n"
+
+    youtube_url = product_data.get("youtube_url")
+    if youtube_url:
+        text += f"▶️ <b>YouTube:</b> {escape_html(youtube_url)}\n"
+    else:
+        text += "▶️ <b>YouTube:</b> ❌ пропущена\n"
+
+    text += "📷 <b>Фото:</b> ❌ не добавлено\n\n✅ <b>Товар готов к созданию!</b>"
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Создать", callback_data="product_add_confirm")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="product_add_cancel")]
+        ]
+    )
+
+    await _update_add_flow_message(callback.bot, callback.message.chat.id, data.get("add_bot_message_id"), text, keyboard, state)
+    await callback.answer()
+
+
 @router.message(StateFilter(AdminProductState.adding_photo), F.photo, IsAdmin())
 async def product_add_photo(message: Message, state: FSMContext):
     """Получение фото товара"""
@@ -740,7 +916,7 @@ async def product_add_photo(message: Message, state: FSMContext):
     except Exception:
         pass
 
-    # Прогрессивный текст: показываем все заполненные поля перед сохранением
+    # Формируем превью для подтверждения
     desc = product_data.get('description', 'Не указано')
     desc_short = desc[:150] + ('...' if len(desc) > 150 else '')
 
@@ -749,10 +925,21 @@ async def product_add_photo(message: Message, state: FSMContext):
         f"📝 <b>Описание:</b> {escape_html(desc_short)}\n"
         f"💰 <b>Цена:</b> {product_data.get('price', 'Не указана')} ₽\n"
         f"🏷️ <b>Категория:</b> {escape_html(product_data.get('category', 'Не выбрана'))}\n"
-        f"📦 <b>Количество:</b> {product_data.get('quantity', 'Не указано')} шт.\n"
-        f"📷 <b>Фото:</b> ✅ добавлено\n\n"
-        f"✅ <b>Товар готов к созданию!</b>"
+        f"📦 <b>Количество:</b> {product_data.get('quantity', 0)} шт.\n"
     )
+    ozon_url = product_data.get("ozon_url")
+    if ozon_url:
+        text += f"🛍 <b>Ozon:</b> {escape_html(ozon_url)}\n"
+    else:
+        text += "🛍 <b>Ozon:</b> ❌ пропущена\n"
+
+    youtube_url = product_data.get("youtube_url")
+    if youtube_url:
+        text += f"▶️ <b>YouTube:</b> {escape_html(youtube_url)}\n"
+    else:
+        text += "▶️ <b>YouTube:</b> ❌ пропущена\n"
+
+    text += "📷 <b>Фото:</b> ✅ добавлено\n\n✅ <b>Товар готов к созданию!</b>"
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -867,6 +1054,8 @@ async def product_edit_select(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="💰 Цена", callback_data="edit_field_price")],
             [InlineKeyboardButton(text="🏷️ Категория", callback_data="edit_field_category")],
             [InlineKeyboardButton(text="📦 Количество", callback_data="edit_field_quantity")],
+            [InlineKeyboardButton(text="🔗 Ozon URL", callback_data="edit_field_ozon_url")],
+            [InlineKeyboardButton(text="🔗 YouTube URL", callback_data="edit_field_youtube_url")],
             [InlineKeyboardButton(text="📷 Изменить фото", callback_data="edit_field_photo")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=return_callback)],
         ]
@@ -1184,6 +1373,8 @@ async def edit_photo_back(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="💰 Цена", callback_data="edit_field_price")],
             [InlineKeyboardButton(text="🏷️ Категория", callback_data="edit_field_category")],
             [InlineKeyboardButton(text="📦 Количество", callback_data="edit_field_quantity")],
+            [InlineKeyboardButton(text="🔗 Ozon URL", callback_data="edit_field_ozon_url")],
+            [InlineKeyboardButton(text="🔗 YouTube URL", callback_data="edit_field_youtube_url")],
             [InlineKeyboardButton(text="📷 Изменить фото", callback_data="edit_field_photo")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=return_callback)],
         ]
@@ -1246,8 +1437,7 @@ async def edit_photo_invalid(message: Message, state: FSMContext):
 )
 async def product_edit_field(callback: CallbackQuery, state: FSMContext):
     """Выбор поля для редактирования"""
-    field = callback.data.split("_")[2]
-
+    field = "_".join(callback.data.split("_")[2:])
     data = await state.get_data()
     product_id = data.get("editing_product_id")
     product = await get_product_by_id(product_id) if product_id else None
@@ -1372,6 +1562,7 @@ async def product_edit_category_select(callback: CallbackQuery, state: FSMContex
             category=new_category,
             quantity=product['quantity'],
             ozon_url=product['ozon_url'],
+            youtube_url=product['youtube_url'],
             image_file_id=product['image_file_id'],
         )
 
@@ -1482,6 +1673,7 @@ async def product_edit_value(message: Message, state: FSMContext):
             "category": product['category'],
             "quantity": product['quantity'],
             "ozon_url": product['ozon_url'],
+            "youtube_url": product['youtube_url'],
             "image_file_id": current_image,
         }
 
@@ -1510,6 +1702,16 @@ async def product_edit_value(message: Message, state: FSMContext):
                 await message.answer(f"❌ Некорректная категория. Допустимые: {', '.join(CATEGORY_MAP.values())}")
                 return
             update_data["category"] = value
+        elif field == "ozon_url":
+            if not (value.startswith("http://") or value.startswith("https://")):
+                await message.answer("❌ Введите корректную ссылку (начинается с http:// или https://).")
+                return
+            update_data["ozon_url"] = value
+        elif field == "youtube_url":
+            if not (value.startswith("http://") or value.startswith("https://")):
+                await message.answer("❌ Введите корректную ссылку (начинается с http:// или https://).")
+                return
+            update_data["youtube_url"] = value
 
         result = await update_product(
             product_id=product_id,
@@ -1519,6 +1721,7 @@ async def product_edit_value(message: Message, state: FSMContext):
             category=update_data["category"],
             quantity=update_data["quantity"],
             ozon_url=update_data["ozon_url"],
+            youtube_url=update_data["youtube_url"],
             image_file_id=update_data["image_file_id"],
         )
 
@@ -1556,6 +1759,8 @@ async def product_edit_value(message: Message, state: FSMContext):
                 "price": "Цена",
                 "quantity": "Количество",
                 "category": "Категория",
+                "ozon_url": "Ozon URL",
+                "youtube_url": "YouTube URL",
             }
             field_ru = field_names.get(field, field)
 

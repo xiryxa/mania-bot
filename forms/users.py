@@ -57,8 +57,10 @@ class AdminProductState(StatesGroup):
     adding_description = State() # ввод описания
     adding_price = State()       # ввод цены
     adding_category = State()    # ввод категории
-    adding_photo = State()       # загрузка фото
     adding_quantity = State()    # количество
+    adding_ozon = State()        # ввод ссылки на Ozon
+    adding_youtube = State()     # ввод ссылки на YouTube
+    adding_photo = State()       # загрузка фото
     editing_select = State()     # выбор товара для редактирования
     editing_field = State()      # выбор поля для редактирования
     editing_value = State()      # новое значение поля

@@ -118,7 +118,7 @@ async def test_edit_product_value_updates_cache_as_dict(mock_get_product, mock_u
         "editing_field": "price",
         "admin_products": [MockSqliteRow(id=1, name="Old", description="Desc", price=100, category="C", quantity=5, ozon_url=None, image_file_id=None)],
     }
-    mock_get_product.return_value = MockSqliteRow(id=1, name="Old", description="Desc", price=100, category="C", quantity=5, ozon_url=None, image_file_id=None)
+    mock_get_product.return_value = MockSqliteRow(id=1, name="Old", description="Desc", price=100, category="C", quantity=5, ozon_url=None, youtube_url=None, image_file_id=None)
     mock_update_product.return_value = {"success": True, "product_id": 1, "restocked": False}
 
     await product_edit_value(mock_message, mock_state)
@@ -201,7 +201,7 @@ async def test_edit_product_invalid_input_rejection(mock_get_product, mock_updat
         "editing_product_id": 1,
         "editing_field": "price"
     }
-    mock_get_product.return_value = MockSqliteRow(id=1, name="Test", description="D", price=100, category="C", quantity=5, ozon_url=None, image_file_id=None)
+    mock_get_product.return_value = MockSqliteRow(id=1, name="Test", description="D", price=100, category="C", quantity=5, ozon_url=None, youtube_url=None, image_file_id=None)
 
     await product_edit_value(mock_message, mock_state)
 
@@ -257,7 +257,7 @@ async def test_edit_product_category_invalid_input_rejection(mock_get_product, m
     }
     mock_get_product.return_value = MockSqliteRow(
         id=1, name="Test", description="D", price=100,
-        category="гусь", quantity=5, ozon_url=None, image_file_id=None
+        category="гусь", quantity=5, ozon_url=None, youtube_url=None, image_file_id=None
     )
 
     await product_edit_value(mock_message, mock_state)

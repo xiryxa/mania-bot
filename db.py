@@ -66,7 +66,7 @@ async def init_db():
                 FOREIGN KEY (product_id) REFERENCES products(id)
             )
         """)
-        
+
         # ---------- Таблица подписок на появление товара ----------
         await db.execute("""
             CREATE TABLE IF NOT EXISTS product_subscriptions (
@@ -117,6 +117,10 @@ async def init_db():
         if "low_stock_notified" not in column_names:
             await db.execute("ALTER TABLE products ADD COLUMN low_stock_notified INTEGER DEFAULT 0")
             logger.info("✅ Добавлено поле low_stock_notified в таблицу products")
+
+        if "youtube_url" not in column_names:
+            await db.execute("ALTER TABLE products ADD COLUMN youtube_url TEXT")
+            logger.info("✅ Добавлено поле youtube_url в таблицу products")
 
         cursor = await db.execute("PRAGMA table_info(users)")
         columns = await cursor.fetchall()
@@ -199,8 +203,8 @@ async def get_user_count():
         cursor = await db.execute("SELECT COUNT(*) FROM users")
         result = await cursor.fetchone()
         return result[0] if result else 0
-    
-    
+
+
 async def get_all_user_ids() -> list[int]:
     """
     Получить список Telegram ID всех зарегистрированных пользователей.
@@ -228,7 +232,7 @@ async def get_all_products():
     async with aiosqlite.connect(DATABASE) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT id, name, description, price, category, quantity, ozon_url, image_file_id "
+            "SELECT id, name, description, price, category, quantity, ozon_url, youtube_url, image_file_id "
             "FROM products WHERE is_active = 1 ORDER BY sort_order ASC, id ASC"
         )
         return await cursor.fetchall()
@@ -239,7 +243,7 @@ async def get_product_by_id(product_id: int):
     async with aiosqlite.connect(DATABASE) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT id, name, description, price, category, quantity, ozon_url, image_file_id "
+            "SELECT id, name, description, price, category, quantity, ozon_url, youtube_url, image_file_id "
             "FROM products WHERE id = ?",
             (product_id,),
         )
@@ -282,7 +286,7 @@ async def get_products_by_category(category: str) -> list:
     async with aiosqlite.connect(DATABASE) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT id, name, description, price, category, image_file_id, quantity "
+            "SELECT id, name, description, price, category, quantity, ozon_url, youtube_url, image_file_id "
             "FROM products WHERE category = ? AND is_active = 1 "
             "ORDER BY sort_order ASC, id ASC",
             (category,),
@@ -295,6 +299,8 @@ async def get_products_by_category(category: str) -> list:
                 "description": row["description"],
                 "price": row["price"],
                 "category": row["category"],
+                "ozon_url": row["ozon_url"],
+                "youtube_url": row["youtube_url"],
                 "image_file_id": row["image_file_id"],
                 "quantity": row["quantity"],
             }
@@ -354,7 +360,7 @@ async def get_order_by_id(order_id: int):
                 orders.tracking_number,
                 orders.unit_price,
                 orders.comment,
-                orders.product_id  
+                orders.product_id
             FROM orders
             LEFT JOIN users ON orders.user_id = users.id
             LEFT JOIN products ON orders.product_id = products.id
@@ -371,8 +377,8 @@ async def update_order_status(order_id: int, status: str):
             (status, order_id),
         )
         await db.commit()
-        
-        
+
+
 async def update_order_status_atomic(order_id: int, new_status: str) -> dict:
     """
     Атомарно изменяет статус заказа и корректирует остатки на складе.
@@ -386,34 +392,34 @@ async def update_order_status_atomic(order_id: int, new_status: str) -> dict:
             (order_id,)
         )
         order = await cursor.fetchone()
-        
+
         if not order:
             return {"success": False, "message": "Заказ не найден"}
-        
+
         current_status, product_id, quantity = order
-        
+
         # Защита от повторного выполнения (idempotency)
         if current_status == new_status:
             return {"success": True, "message": "Статус не изменился", "old_status": current_status, "new_status": new_status}
-        
+
         restocked = False
-        
+
         if new_status == "отменён" and current_status != "отменён":
             # Возврат на склад при отмене
             if product_id and quantity > 0:
                 cursor = await db.execute("SELECT quantity FROM products WHERE id = ?", (product_id,))
                 stock_res = await cursor.fetchone()
                 old_quantity = stock_res["quantity"] if stock_res else 0
-                
+
                 await db.execute(
                     "UPDATE products SET quantity = quantity + ? WHERE id = ?",
                     (quantity, product_id)
                 )
                 logger.info(f"✅ Stock returned for cancelled order #{order_id} (product {product_id}, qty {quantity})")
-                
+
                 if old_quantity == 0 and (old_quantity + quantity) > 0:
                     restocked = True
-                
+
         elif current_status == "отменён" and new_status != "отменён":
             # Повторное списание при восстановлении из отменённых
             if product_id and quantity > 0:
@@ -423,31 +429,31 @@ async def update_order_status_atomic(order_id: int, new_status: str) -> dict:
                 )
                 stock_res = await cursor.fetchone()
                 current_stock = stock_res["quantity"] if stock_res else 0
-                
+
                 if current_stock < quantity:
                     return {
-                        "success": False, 
+                        "success": False,
                         "message": f"Недостаточно товара на складе. Доступно: {current_stock} шт., требуется: {quantity} шт.",
                         "old_status": current_status
                     }
-                
+
                 await db.execute(
                     "UPDATE products SET quantity = quantity - ? WHERE id = ?",
                     (quantity, product_id)
                 )
                 logger.info(f"✅ Stock decreased for restored order #{order_id} (product {product_id}, qty {quantity})")
-        
+
         # 3. Финальное обновление статуса
         await db.execute(
             "UPDATE orders SET status = ? WHERE id = ?",
             (new_status, order_id)
         )
         await db.commit()
-        
+
         return {
-            "success": True, 
-            "message": "Успешно", 
-            "old_status": current_status, 
+            "success": True,
+            "message": "Успешно",
+            "old_status": current_status,
             "new_status": new_status,
             "restocked": restocked,
             "product_id": product_id
@@ -582,15 +588,16 @@ async def add_product(
     category: str,
     quantity: int = 0,
     ozon_url: str = None,
+    youtube_url: str = None,
     image_file_id: str = None,
 ):
     async with aiosqlite.connect(DATABASE) as db:
         db.row_factory = aiosqlite.Row
         await db.execute(
             "INSERT INTO products "
-            "(name, description, price, category, image_file_id, ozon_url, quantity) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (name, description, price, category, image_file_id, ozon_url, quantity),
+            "(name, description, price, category, image_file_id, ozon_url, youtube_url, quantity) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, description, price, category, image_file_id, ozon_url, youtube_url, quantity),
         )
         await db.commit()
 
@@ -604,6 +611,7 @@ async def update_product(
     quantity: int,
     image_file_id: str = None,
     ozon_url: str = None,
+    youtube_url: str = None,
 ) -> dict:
     async with aiosqlite.connect(DATABASE) as db:
         db.row_factory = aiosqlite.Row
@@ -617,9 +625,9 @@ async def update_product(
         await db.execute(
             "UPDATE products SET "
             "name = ?, description = ?, price = ?, category = ?, "
-            "image_file_id = ?, ozon_url = ?, quantity = ? "
+            "image_file_id = ?, ozon_url = ?, youtube_url = ?, quantity = ? "
             "WHERE id = ?",
-            (name, description, price, category, image_file_id, ozon_url, quantity, product_id),
+            (name, description, price, category, image_file_id, ozon_url, youtube_url, quantity, product_id),
         )
 
         if quantity > LOW_STOCK_THRESHOLD and old_quantity <= LOW_STOCK_THRESHOLD:
@@ -629,7 +637,7 @@ async def update_product(
             )
 
         await db.commit()
-        
+
         # Проверяем переход 0 -> >0
         restocked = (old_quantity == 0 and quantity > 0)
         return {"success": True, "restocked": restocked, "product_id": product_id}
@@ -668,7 +676,7 @@ async def get_deleted_products():
     async with aiosqlite.connect(DATABASE) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT id, name, description, price, category, quantity, ozon_url, image_file_id "
+            "SELECT id, name, description, price, category, quantity, ozon_url, youtube_url, image_file_id "
             "FROM products WHERE is_active = 0 ORDER BY id DESC"
         )
         return await cursor.fetchall()
@@ -713,8 +721,8 @@ async def update_order_tracking_number(order_id: int, tracking_number: str):
             (tracking_number, order_id),
         )
         await db.commit()
-        
-        
+
+
 async def update_product_image(product_id: int, image_file_id: str) -> bool:
     """Обновить фото товара"""
     async with aiosqlite.connect(DATABASE) as db:
@@ -958,11 +966,11 @@ async def check_and_notify_low_stock(
 
 # ==================== ЛОГИКА СТАТУСОВ ЗАКАЗОВ ====================
 def get_status_notification_text(
-    old_status: str | None, 
-    new_status: str, 
-    order_id: int, 
-    product_name: str, 
-    delivery_method: str, 
+    old_status: str | None,
+    new_status: str,
+    order_id: int,
+    product_name: str,
+    delivery_method: str,
     delivery_address: str
 ) -> str | None:
     """
@@ -982,23 +990,23 @@ def get_status_notification_text(
     # 1. Движение ВПЕРЁД (стандартные сообщения)
     if new_status == "в обработке" and old_status == "новый":
         return f"🔄 Ваш заказ #{order_id} принят в обработку! Мы уже готовим «{product}» к отправке."
-    
+
     if new_status == "отправлен" and old_status == "в обработке":
         return f"📦 Ваш заказ #{order_id} отправлен!\n🚚 Способ доставки: {delivery}\n📍 Адрес: {address}"
-    
+
     if new_status == "доставлен" and old_status == "отправлен":
         return f"✅ Заказ #{order_id} доставлен! Спасибо за покупку 🦆\nБудем рады видеть вас снова."
-    
+
     if new_status == "отменён" and old_status in ["новый", "в обработке", "отправлен"]:
         return f"❌ Заказ #{order_id} отменён. Если это ошибка — напишите нам, контакты в разделе /about."
 
     # 2. ОТКАТЫ НАЗАД (нейтральная констатация факта + ссылка на /about)
     if old_status == "отправлен" and new_status in ["в обработке", "новый"]:
         return f"ℹ️ Ваш заказ #{order_id} вернулся в стадию обработки. Продолжается подготовка к отправке.\nПо всем вопросам — контакты в /about."
-    
+
     if old_status == "доставлен" and new_status in ["отправлен", "в обработке", "новый"]:
         return f"ℹ️ Статус вашего заказа #{order_id} изменён на «{new_status_escaped}».\nПо всем вопросам — контакты в /about."
-    
+
     if old_status == "в обработке" and new_status == "новый":
         return f"ℹ️ Ваш заказ #{order_id} вернулся в статус «Новый». Продолжается проверка.\nПо всем вопросам — контакты в /about."
 
@@ -1020,7 +1028,7 @@ async def clear_order_tracking_number(order_id: int):
         )
         await db.commit()
         logger.info(f"🧹 DB: Tracking number cleared for order #{order_id}")
-        
+
 
 # ==================== ПОДПИСКИ НА ТОВАРЫ ====================
 async def subscribe_to_product(user_id: int, product_id: int) -> dict:

@@ -219,25 +219,22 @@ async def show_product_card(
             )
         )
 
+    # Формирование кнопок URL
+    url_buttons = []
+    if product.get("ozon_url"):
+        url_buttons.append(InlineKeyboardButton(text="🛍 Ozon", url=product["ozon_url"], style="primary"))
+    if product.get("youtube_url"):
+        url_buttons.append(InlineKeyboardButton(text="▶️ Обзор", url=product["youtube_url"], style="danger"))
+
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             nav_buttons if nav_buttons else [],
             [
-                InlineKeyboardButton(
-                    text=order_text,
-                    callback_data=order_callback,
-                ),
-                InlineKeyboardButton(
-                    text="📋 Список",
-                    callback_data="shop_show_list",
-                ),
+                InlineKeyboardButton(text=order_text, callback_data=order_callback, style="success"),
+                InlineKeyboardButton(text="📋 Список", callback_data="shop_show_list"),
             ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад к выбору",
-                    callback_data="shop_manks_menu",
-                )
-            ],
+            url_buttons if url_buttons else [],
+            [InlineKeyboardButton(text="⬅️ Назад к выбору", callback_data="shop_manks_menu")],
         ]
     )
 
@@ -312,6 +309,7 @@ async def show_product_card(
 async def shop_product_page(callback: CallbackQuery, state: FSMContext):
     """Переключение страницы товара (редактирует сообщение)"""
     page = int(callback.data.split("_")[3])
+    await state.update_data(shop_page=page)
     await show_product_card(callback.message, state, page)
     await callback.answer()
 
@@ -342,9 +340,10 @@ async def shop_show_list(callback: CallbackQuery, state: FSMContext):
         stock = "✅" if quantity > 0 else "❌"
         text += f"{i}. {escape_html(product['name'])} — {product['price']} ₽ {stock} (в наличии: {quantity} шт.)\n"
 
+    return_page = data.get("shop_page", 0)
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад к товарам", callback_data="shop_product_page_0")]
+            [InlineKeyboardButton(text="⬅️ Назад к товарам", callback_data=f"shop_product_page_{return_page}")]
         ]
     )
 
