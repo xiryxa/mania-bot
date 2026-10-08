@@ -1004,31 +1004,8 @@ async def product_edit_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("edit_select_"), IsAdmin())
-async def product_edit_select(callback: CallbackQuery, state: FSMContext):
-    """Выбор товара для редактирования"""
-    parts = callback.data.split("_")
-    product_id = int(parts[2])
-
-    if len(parts) > 3 and parts[3] == "list":
-        return_callback = f"product_page_admin_{parts[4]}"
-    else:
-        return_callback = "product_edit"
-
-    product = await get_product_by_id(product_id)
-
-    if not product:
-        await safe_edit(callback, "❌ Товар не найден.")
-        await callback.answer()
-        return
-
-    await state.update_data(
-        editing_product_id=product_id,
-        edit_return_callback=return_callback
-    )
-    await state.set_state(AdminProductState.editing_field)
-
-    # Безопасный caption: описание обрезается с учётом бюджета каркаса
+async def _render_edit_menu(callback: CallbackQuery, product: dict, return_callback: str, state: FSMContext):
+    """Вспомогательная функция для отрисовки меню редактирования товара"""
     head = (
         f"✏️ <b>Редактирование товара</b>\n"
         f"━━━━━━━━━━━━━━━━━\n\n"
@@ -1040,9 +1017,14 @@ async def product_edit_select(callback: CallbackQuery, state: FSMContext):
         f"\n💰 <b>Цена:</b> {product['price']} ₽\n"
         f"🏷️ <b>Категория:</b> {escape_html(product['category'])}\n"
         f"📦 <b>В наличии:</b> {product['quantity']} шт.\n"
-        f"📷 <b>Фото:</b> {'✅ есть' if product['image_file_id'] else '❌ нет'}\n\n"
-        f"Выберите поле для изменения:"
     )
+    ozon = product['ozon_url']
+    youtube = product['youtube_url']
+    ozon_display = escape_html(ozon[:60] + '...' if ozon and len(ozon) > 60 else (ozon or '❌ не добавлена'))
+    youtube_display = escape_html(youtube[:60] + '...' if youtube and len(youtube) > 60 else (youtube or '❌ не добавлена'))
+    tail += f"🛍 <b>Ozon:</b> {ozon_display}\n"
+    tail += f"▶️ <b>YouTube:</b> {youtube_display}\n"
+    tail += f"📷 <b>Фото:</b> {'✅ есть' if product['image_file_id'] else '❌ нет'}\n\nВыберите поле для изменения:"
 
     budget = CAPTION_LIMIT - visible_len(head + tail) - 4
     text = head + escape_html(truncate_plain(product['description'], budget)) + tail
@@ -1061,26 +1043,19 @@ async def product_edit_select(callback: CallbackQuery, state: FSMContext):
         ]
     )
 
-    # Если у товара есть фото — показываем его (паттерн из show_admin_product)
     if product['image_file_id']:
         try:
-            await callback.message.bot.edit_message_media(
+            await callback.bot.edit_message_media(
                 chat_id=callback.message.chat.id,
                 message_id=callback.message.message_id,
-                media=InputMediaPhoto(
-                    media=product['image_file_id'],
-                    caption=text,
-                    parse_mode=ParseMode.HTML,
-                ),
+                media=InputMediaPhoto(media=product['image_file_id'], caption=text, parse_mode=ParseMode.HTML),
                 reply_markup=keyboard,
             )
             await state.update_data(edit_bot_message_id=callback.message.message_id)
         except Exception as e:
             error_text = str(e).lower()
             if "message is not modified" in error_text:
-                await callback.answer()
                 return
-            logger.warning(f"product_edit_select: edit_message_media failed: {e}, sending new photo")
             try:
                 await callback.message.delete()
             except Exception:
@@ -1093,9 +1068,32 @@ async def product_edit_select(callback: CallbackQuery, state: FSMContext):
             )
             await state.update_data(edit_bot_message_id=new_msg.message_id)
     else:
-        await render_admin_banner(callback.message, text, keyboard)
-        await state.update_data(edit_bot_message_id=callback.message.message_id)
+        try:
+            await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+            await state.update_data(edit_bot_message_id=callback.message.message_id)
+        except Exception:
+            new_msg = await callback.message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+            await state.update_data(edit_bot_message_id=new_msg.message_id)
+@router.callback_query(F.data.startswith("edit_select_"), IsAdmin())
+async def product_edit_select(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split("_")
+    product_id = int(parts[2])
+    if len(parts) > 3 and parts[3] == "list":
+        page = int(parts[4])
+        return_callback = f"product_page_admin_{page}"
+    else:
+        return_callback = "product_edit"
 
+    product = await get_product_by_id(product_id)
+    if not product:
+        await safe_edit(callback, "❌ Товар не найден.")
+        await callback.answer()
+        return
+
+    await state.update_data(editing_product_id=product_id, edit_return_callback=return_callback)
+    await state.set_state(AdminProductState.editing_field)
+
+    await _render_edit_menu(callback, product, return_callback, state)
     await callback.answer()
 
 
@@ -1455,6 +1453,73 @@ async def product_edit_field(callback: CallbackQuery, state: FSMContext):
             f"🏷️ <b>Текущая категория:</b> {escape_html(current_category)}\n\n"
             f"🏷️ <b>Выберите новую категорию товара:</b>"
         )
+    elif field == "ozon_url":
+        current_url = product['ozon_url'] if product else None
+        if current_url:
+            text = f"🛍 <b>Ozon URL</b>\n\nТекущая ссылка:\n{escape_html(current_url)}\n\nВыберите действие:"
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="✏️ Изменить ссылку", callback_data="edit_url_ozon")],
+                    [InlineKeyboardButton(text="🗑 Очистить ссылку", callback_data="clear_url_ozon")],
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"edit_select_{product_id}")],
+                ]
+            )
+        else:
+            text = "🛍 <b>Ozon URL</b>\n\nСсылка не добавлена.\n\nВыберите действие:"
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="✏️ Добавить ссылку", callback_data="edit_url_ozon")],
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"edit_select_{product_id}")],
+                ]
+            )
+        if product and product['image_file_id']:
+            try:
+                await callback.bot.edit_message_media(
+                    chat_id=callback.message.chat.id,
+                    message_id=callback.message.message_id,
+                    media=InputMediaPhoto(media=product['image_file_id'], caption=text, parse_mode=ParseMode.HTML),
+                    reply_markup=keyboard,
+                )
+            except Exception:
+                await render_admin_banner(callback.message, text, keyboard)
+        else:
+            await render_admin_banner(callback.message, text, keyboard)
+        await callback.answer()
+        return
+    elif field == "youtube_url":
+        current_url = product['youtube_url'] if product else None
+        if current_url:
+            text = f"▶️ <b>YouTube URL</b>\n\nТекущая ссылка:\n{escape_html(current_url)}\n\nВыберите действие:"
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="✏️ Изменить ссылку", callback_data="edit_url_youtube")],
+                    [InlineKeyboardButton(text="🗑 Очистить ссылку", callback_data="clear_url_youtube")],
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"edit_select_{product_id}")],
+                ]
+            )
+        else:
+            text = "▶️ <b>YouTube URL</b>\n\nСсылка не добавлена.\n\nВыберите действие:"
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="✏️ Добавить ссылку", callback_data="edit_url_youtube")],
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"edit_select_{product_id}")],
+                ]
+            )
+        if product and product['image_file_id']:
+            try:
+                await callback.bot.edit_message_media(
+                    chat_id=callback.message.chat.id,
+                    message_id=callback.message.message_id,
+                    media=InputMediaPhoto(media=product['image_file_id'], caption=text, parse_mode=ParseMode.HTML),
+                    reply_markup=keyboard,
+                )
+            except Exception:
+                await render_admin_banner(callback.message, text, keyboard)
+        else:
+            await render_admin_banner(callback.message, text, keyboard)
+        await callback.answer()
+        return
+
     else:
         field_names = {
             "name": "название",
@@ -1534,6 +1599,191 @@ async def product_edit_field(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@router.callback_query(F.data == "edit_url_ozon", IsAdmin())
+async def edit_url_ozon(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    product_id = data.get("editing_product_id")
+    product = await get_product_by_id(product_id)
+    await state.update_data(editing_field="ozon_url")
+    await state.set_state(AdminProductState.editing_value)
+
+    text = "✏️ <b>Введите новую ссылку на Ozon</b>\n\nСсылка должна начинаться с http:// или https://"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data=f"edit_select_{product_id}")]
+        ]
+    )
+    if product and product['image_file_id']:
+        try:
+            await callback.bot.edit_message_media(
+                chat_id=callback.message.chat.id,
+                message_id=callback.message.message_id,
+                media=InputMediaPhoto(media=product['image_file_id'], caption=text, parse_mode=ParseMode.HTML),
+                reply_markup=keyboard,
+            )
+            await state.update_data(edit_bot_message_id=callback.message.message_id)
+        except Exception:
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            new_msg = await callback.message.answer_photo(
+                photo=product['image_file_id'],
+                caption=text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML,
+            )
+            await state.update_data(edit_bot_message_id=new_msg.message_id)
+    else:
+        try:
+            await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+            await state.update_data(edit_bot_message_id=callback.message.message_id)
+        except Exception:
+            new_msg = await callback.message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+            await state.update_data(edit_bot_message_id=new_msg.message_id)
+    await callback.answer()
+
+@router.callback_query(F.data == "clear_url_ozon", IsAdmin())
+async def clear_url_ozon(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    product_id = data.get("editing_product_id")
+    product = await get_product_by_id(product_id)
+    if not product:
+        await callback.answer("❌ Товар не найден.", show_alert=True)
+        return
+
+    result = await update_product(
+        product_id=product_id,
+        name=product['name'],
+        description=product['description'],
+        price=product['price'],
+        category=product['category'],
+        quantity=product['quantity'],
+        ozon_url=None,
+        youtube_url=product['youtube_url'],
+        image_file_id=product['image_file_id'],
+    )
+
+    if not result.get("success"):
+        await callback.answer("❌ Ошибка при очистке ссылки.", show_alert=True)
+        return
+
+    admin_products = data.get("admin_products", [])
+    for i, p in enumerate(admin_products):
+        if p['id'] == product_id:
+            admin_products[i] = {
+                'id': product_id,
+                'name': product['name'],
+                'description': product['description'],
+                'price': product['price'],
+                'category': product['category'],
+                'quantity': product['quantity'],
+                'ozon_url': None,
+                'youtube_url': product['youtube_url'],
+                'image_file_id': product['image_file_id'],
+            }
+            break
+    await state.update_data(admin_products=admin_products)
+    await state.set_state(AdminProductState.editing_field)
+
+    return_callback = data.get("edit_return_callback", "product_edit")
+    product = await get_product_by_id(product_id)
+    await _render_edit_menu(callback, product, return_callback, state)
+    await callback.answer("✅ Ссылка очищена!")
+
+@router.callback_query(F.data == "edit_url_youtube", IsAdmin())
+async def edit_url_youtube(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    product_id = data.get("editing_product_id")
+    product = await get_product_by_id(product_id)
+    await state.update_data(editing_field="youtube_url")
+    await state.set_state(AdminProductState.editing_value)
+
+    text = "✏️ <b>Введите новую ссылку на YouTube</b>\n\nСсылка должна начинаться с http:// или https://"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data=f"edit_select_{product_id}")]
+        ]
+    )
+    if product and product['image_file_id']:
+        try:
+            await callback.bot.edit_message_media(
+                chat_id=callback.message.chat.id,
+                message_id=callback.message.message_id,
+                media=InputMediaPhoto(media=product['image_file_id'], caption=text, parse_mode=ParseMode.HTML),
+                reply_markup=keyboard,
+            )
+            await state.update_data(edit_bot_message_id=callback.message.message_id)
+        except Exception:
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            new_msg = await callback.message.answer_photo(
+                photo=product['image_file_id'],
+                caption=text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML,
+            )
+            await state.update_data(edit_bot_message_id=new_msg.message_id)
+    else:
+        try:
+            await callback.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+            await state.update_data(edit_bot_message_id=callback.message.message_id)
+        except Exception:
+            new_msg = await callback.message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+            await state.update_data(edit_bot_message_id=new_msg.message_id)
+    await callback.answer()
+
+@router.callback_query(F.data == "clear_url_youtube", IsAdmin())
+async def clear_url_youtube(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    product_id = data.get("editing_product_id")
+    product = await get_product_by_id(product_id)
+    if not product:
+        await callback.answer("❌ Товар не найден.", show_alert=True)
+        return
+
+    result = await update_product(
+        product_id=product_id,
+        name=product['name'],
+        description=product['description'],
+        price=product['price'],
+        category=product['category'],
+        quantity=product['quantity'],
+        ozon_url=product['ozon_url'],
+        youtube_url=None,
+        image_file_id=product['image_file_id'],
+    )
+
+    if not result.get("success"):
+        await callback.answer("❌ Ошибка при очистке ссылки.", show_alert=True)
+        return
+
+    admin_products = data.get("admin_products", [])
+    for i, p in enumerate(admin_products):
+        if p['id'] == product_id:
+            admin_products[i] = {
+                'id': product_id,
+                'name': product['name'],
+                'description': product['description'],
+                'price': product['price'],
+                'category': product['category'],
+                'quantity': product['quantity'],
+                'ozon_url': product['ozon_url'],
+                'youtube_url': None,
+                'image_file_id': product['image_file_id'],
+            }
+            break
+    await state.update_data(admin_products=admin_products)
+    await state.set_state(AdminProductState.editing_field)
+
+    return_callback = data.get("edit_return_callback", "product_edit")
+    product = await get_product_by_id(product_id)
+    await _render_edit_menu(callback, product, return_callback, state)
+    await callback.answer("✅ Ссылка очищена!")
+
+
 @router.callback_query(
     StateFilter(AdminProductState.editing_field),
     F.data.startswith("edit_category_"),
@@ -1602,6 +1852,8 @@ async def product_edit_category_select(callback: CallbackQuery, state: FSMContex
                 [InlineKeyboardButton(text="💰 Цена", callback_data="edit_field_price")],
                 [InlineKeyboardButton(text="🏷️ Категория", callback_data="edit_field_category")],
                 [InlineKeyboardButton(text="📦 Количество", callback_data="edit_field_quantity")],
+                [InlineKeyboardButton(text="🔗 Ozon URL", callback_data="edit_field_ozon_url")],
+                [InlineKeyboardButton(text="🔗 YouTube URL", callback_data="edit_field_youtube_url")],
                 [InlineKeyboardButton(text="📷 Изменить фото", callback_data="edit_field_photo")],
                 [InlineKeyboardButton(text="⬅️ Назад", callback_data=return_callback)],
             ]
@@ -1746,6 +1998,8 @@ async def product_edit_value(message: Message, state: FSMContext):
                         'price': update_data["price"],
                         'category': update_data["category"],
                         'quantity': update_data["quantity"],
+                        'ozon_url': update_data["ozon_url"],
+                        'youtube_url': update_data["youtube_url"],
                         'image_file_id': current_image,
                     }
                     break
@@ -1775,9 +2029,14 @@ async def product_edit_value(message: Message, state: FSMContext):
                 f"\n💰 <b>Цена:</b> {update_data['price']} ₽\n"
                 f"🏷️ <b>Категория:</b> {escape_html(update_data['category'])}\n"
                 f"📦 <b>В наличии:</b> {update_data['quantity']} шт.\n"
-                f"📷 <b>Фото:</b> {'✅ есть' if current_image else '❌ нет'}\n\n"
-                f"Выберите поле для изменения:"
             )
+            ozon = update_data['ozon_url']
+            youtube = update_data['youtube_url']
+            ozon_display = escape_html(ozon[:60] + '...' if ozon and len(ozon) > 60 else (ozon or '❌ не добавлена'))
+            youtube_display = escape_html(youtube[:60] + '...' if youtube and len(youtube) > 60 else (youtube or '❌ не добавлена'))
+            tail += f"🛍 <b>Ozon:</b> {ozon_display}\n"
+            tail += f"▶️ <b>YouTube:</b> {youtube_display}\n"
+            tail += f"📷 <b>Фото:</b> {'✅ есть' if current_image else '❌ нет'}\n\nВыберите поле для изменения:"
 
             budget = CAPTION_LIMIT - visible_len(head + tail) - 4
             text = head + escape_html(truncate_plain(update_data['description'], budget)) + tail
@@ -1789,6 +2048,8 @@ async def product_edit_value(message: Message, state: FSMContext):
                     [InlineKeyboardButton(text="💰 Цена", callback_data="edit_field_price")],
                     [InlineKeyboardButton(text="🏷️ Категория", callback_data="edit_field_category")],
                     [InlineKeyboardButton(text="📦 Количество", callback_data="edit_field_quantity")],
+                    [InlineKeyboardButton(text="🔗 Ozon URL", callback_data="edit_field_ozon_url")],
+                    [InlineKeyboardButton(text="🔗 YouTube URL", callback_data="edit_field_youtube_url")],
                     [InlineKeyboardButton(text="📷 Изменить фото", callback_data="edit_field_photo")],
                     [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"product_page_admin_{data.get('admin_page', 0)}" if data.get('edit_return_callback', '').startswith('product_page_admin_') else "product_edit")],
                 ]

@@ -10,6 +10,7 @@ from handlers.admin_products import (
     product_delete_yes,
     restore_yes,
 )
+from handlers.admin_products import product_edit_value, clear_url_ozon, clear_url_youtube
 from forms.users import AdminProductState
 
 # ==============================================================================
@@ -270,3 +271,220 @@ async def test_edit_product_category_invalid_input_rejection(mock_get_product, m
 
     # Проверяем, что update_product НЕ вызван
     mock_update_product.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("handlers.admin_products.update_product")
+@patch("handlers.admin_products.get_product_by_id")
+async def test_edit_product_preserves_urls_in_cache(mock_get_product, mock_update_product, mock_message, mock_state):
+    """Тест: редактирование цены сохраняет ozon_url и youtube_url в кэше admin_products"""
+    mock_message.text = "2000"
+    mock_state.get_data.return_value = {
+        "editing_product_id": 1,
+        "editing_field": "price",
+        "admin_products": [
+            MockSqliteRow(id=1, name="Test", description="D", price=100, category="C", quantity=5, ozon_url="https://ozon.ru", youtube_url="https://youtube.com", image_file_id="file123")
+        ],
+    }
+    mock_get_product.return_value = MockSqliteRow(id=1, name="Test", description="D", price=100, category="C", quantity=5, ozon_url="https://ozon.ru", youtube_url="https://youtube.com", image_file_id="file123")
+    mock_update_product.return_value = {"success": True, "product_id": 1, "restocked": False}
+
+    await product_edit_value(mock_message, mock_state)
+
+    mock_update_product.assert_called_once_with(
+        product_id=1,
+        name="Test",
+        description="D",
+        price=2000,
+        category="C",
+        quantity=5,
+        ozon_url="https://ozon.ru",
+        youtube_url="https://youtube.com",
+        image_file_id="file123",
+    )
+
+    update_data_calls = mock_state.update_data.call_args_list
+    admin_products_update = None
+    for call in update_data_calls:
+        if "admin_products" in call.kwargs:
+            admin_products_update = call.kwargs["admin_products"]
+            break
+    assert admin_products_update is not None
+    assert admin_products_update[0]["ozon_url"] == "https://ozon.ru"
+    assert admin_products_update[0]["youtube_url"] == "https://youtube.com"
+
+
+@pytest.mark.asyncio
+@patch("handlers.admin_products.update_product")
+@patch("handlers.admin_products.get_product_by_id")
+async def test_clear_ozon_url_preserves_youtube_and_cache(mock_get_product, mock_update_product, mock_callback, mock_state):
+    """Тест: очистка Ozon URL сохраняет YouTube и обновляет кэш"""
+    mock_callback.data = "clear_url_ozon"
+    mock_callback.from_user.id = 123
+    mock_state.get_data.return_value = {
+        "editing_product_id": 1,
+        "admin_products": [
+            MockSqliteRow(id=1, name="Test", description="D", price=100, category="C", quantity=5, ozon_url="https://ozon.ru", youtube_url="https://youtube.com", image_file_id="file123")
+        ],
+    }
+    mock_get_product.return_value = MockSqliteRow(id=1, name="Test", description="D", price=100, category="C", quantity=5, ozon_url="https://ozon.ru", youtube_url="https://youtube.com", image_file_id="file123")
+    mock_update_product.return_value = {"success": True}
+
+    await clear_url_ozon(mock_callback, mock_state)
+
+    mock_update_product.assert_called_once_with(
+        product_id=1, name="Test", description="D", price=100, category="C", quantity=5,
+        ozon_url=None, youtube_url="https://youtube.com", image_file_id="file123"
+    )
+
+    update_data_calls = mock_state.update_data.call_args_list
+    admin_products_update = next((call.kwargs["admin_products"] for call in update_data_calls if "admin_products" in call.kwargs), None)
+    assert admin_products_update is not None
+    assert admin_products_update[0]["ozon_url"] is None
+    assert admin_products_update[0]["youtube_url"] == "https://youtube.com"
+
+
+@pytest.mark.asyncio
+@patch("handlers.admin_products.update_product")
+@patch("handlers.admin_products.get_product_by_id")
+async def test_clear_youtube_url_preserves_ozon_and_cache(mock_get_product, mock_update_product, mock_callback, mock_state):
+    """Тест: очистка YouTube URL сохраняет Ozon и обновляет кэш"""
+    mock_callback.data = "clear_url_youtube"
+    mock_callback.from_user.id = 123
+    mock_state.get_data.return_value = {
+        "editing_product_id": 1,
+        "admin_products": [
+            MockSqliteRow(id=1, name="Test", description="D", price=100, category="C", quantity=5, ozon_url="https://ozon.ru", youtube_url="https://youtube.com", image_file_id="file123")
+        ],
+    }
+    mock_get_product.return_value = MockSqliteRow(id=1, name="Test", description="D", price=100, category="C", quantity=5, ozon_url="https://ozon.ru", youtube_url="https://youtube.com", image_file_id="file123")
+    mock_update_product.return_value = {"success": True}
+
+    await clear_url_youtube(mock_callback, mock_state)
+
+    mock_update_product.assert_called_once_with(
+        product_id=1, name="Test", description="D", price=100, category="C", quantity=5,
+        ozon_url="https://ozon.ru", youtube_url=None, image_file_id="file123"
+    )
+
+    update_data_calls = mock_state.update_data.call_args_list
+    admin_products_update = next((call.kwargs["admin_products"] for call in update_data_calls if "admin_products" in call.kwargs), None)
+    assert admin_products_update is not None
+    assert admin_products_update[0]["ozon_url"] == "https://ozon.ru"
+    assert admin_products_update[0]["youtube_url"] is None
+
+
+@pytest.mark.asyncio
+@patch("handlers.admin_products.render_admin_banner")
+@patch("handlers.admin_products.get_product_by_id")
+async def test_edit_field_ozon_url_shows_correct_buttons(mock_get_product, mock_render_banner, mock_callback, mock_state):
+    """Тест: при существующем Ozon URL показываются кнопки изменить/очистить"""
+    mock_callback.data = "edit_field_ozon_url"
+    mock_callback.message.message_id = 1
+    mock_state.get_data.return_value = {"editing_product_id": 1}
+    mock_get_product.return_value = {
+        "id": 1, "name": "T", "description": "D", "price": 100, "category": "C",
+        "quantity": 5, "ozon_url": "https://ozon.ru", "youtube_url": None, "image_file_id": None
+    }
+
+    from handlers.admin_products import product_edit_field
+    await product_edit_field(mock_callback, mock_state)
+
+    mock_render_banner.assert_called_once()
+    call_args = mock_render_banner.call_args
+    text = call_args.args[1]
+    keyboard = call_args.args[2]
+
+    assert "https://ozon.ru" in text
+    assert "Ссылка не добавлена" not in text
+
+    callback_datas = [btn.callback_data for row in keyboard.inline_keyboard for btn in row]
+    assert "edit_url_ozon" in callback_datas
+    assert "clear_url_ozon" in callback_datas
+
+
+@pytest.mark.asyncio
+@patch("handlers.admin_products.render_admin_banner")
+@patch("handlers.admin_products.get_product_by_id")
+async def test_edit_field_youtube_url_none_shows_correct_buttons(mock_get_product, mock_render_banner, mock_callback, mock_state):
+    """Тест: при отсутствующем YouTube URL показывается 'Ссылка не добавлена' и НЕТ кнопки очистки"""
+    mock_callback.data = "edit_field_youtube_url"
+    mock_callback.message.message_id = 1
+    mock_state.get_data.return_value = {"editing_product_id": 1}
+    mock_get_product.return_value = {
+        "id": 1, "name": "T", "description": "D", "price": 100, "category": "C",
+        "quantity": 5, "ozon_url": None, "youtube_url": None, "image_file_id": None
+    }
+
+    from handlers.admin_products import product_edit_field
+    await product_edit_field(mock_callback, mock_state)
+
+    mock_render_banner.assert_called_once()
+    call_args = mock_render_banner.call_args
+    text = call_args.args[1]
+    keyboard = call_args.args[2]
+
+    assert "Ссылка не добавлена" in text
+
+    callback_datas = [btn.callback_data for row in keyboard.inline_keyboard for btn in row]
+    assert "edit_url_youtube" in callback_datas
+    assert "clear_url_youtube" not in callback_datas
+@pytest.mark.asyncio
+@patch("handlers.admin_products.get_product_by_id")
+async def test_edit_url_edits_existing_message(mock_get_product, mock_callback, mock_state):
+    """Тест: при входе в редактирование URL редактируется существующее сообщение, а не создается новое"""
+    mock_callback.data = "edit_url_ozon"
+    mock_callback.message.message_id = 123
+    mock_state.get_data.return_value = {"editing_product_id": 1}
+    mock_get_product.return_value = {
+        "id": 1, "name": "T", "description": "D", "price": 100, "category": "C",
+        "quantity": 5, "ozon_url": "https://ozon.ru", "youtube_url": None, "image_file_id": "file123"
+    }
+    from handlers.admin_products import edit_url_ozon
+    await edit_url_ozon(mock_callback, mock_state)
+    # Проверяем, что был вызван edit_message_media (для фото) или edit_text (для баннера)
+    assert mock_callback.bot.edit_message_media.called or mock_callback.message.edit_text.called
+    # Проверяем, что edit_bot_message_id был сохранен в state
+    update_data_calls = mock_state.update_data.call_args_list
+    assert any("edit_bot_message_id" in call.kwargs for call in update_data_calls)
+@pytest.mark.asyncio
+@patch("handlers.admin_products.update_product")
+@patch("handlers.admin_products.get_product_by_id")
+async def test_edit_url_value_edits_same_message(mock_get_product, mock_update_product, mock_message, mock_state):
+    """Тест: после ввода новой ссылки product_edit_value редактирует ТО ЖЕ сообщение, а не создает новое"""
+    mock_message.text = "https://new-ozon.ru"
+    mock_message.chat.id = 123
+    mock_message.bot.edit_message_media = AsyncMock()
+    mock_message.answer = AsyncMock()
+    mock_message.answer_photo = AsyncMock()
+    mock_state.get_data.return_value = {
+        "editing_product_id": 1,
+        "editing_field": "ozon_url",
+        "edit_bot_message_id": 456,  # ID сообщения, которое должно редактироваться
+        "admin_products": [
+            MockSqliteRow(id=1, name="Test", description="D", price=100, category="C", quantity=5,
+                         ozon_url="https://old-ozon.ru", youtube_url="https://youtube.com", image_file_id="file123")
+        ],
+    }
+    mock_get_product.return_value = MockSqliteRow(
+        id=1, name="Test", description="D", price=100, category="C", quantity=5,
+        ozon_url="https://old-ozon.ru", youtube_url="https://youtube.com", image_file_id="file123"
+    )
+    mock_update_product.return_value = {"success": True, "product_id": 1, "restocked": False}
+
+    from handlers.admin_products import product_edit_value
+    await product_edit_value(mock_message, mock_state)
+
+    # 1. Ссылка успешно сохранена, вторая ссылка не потеряна
+    assert mock_update_product.call_args.kwargs["ozon_url"] == "https://new-ozon.ru"
+    assert mock_update_product.call_args.kwargs["youtube_url"] == "https://youtube.com"
+
+    # 2. Редактируется ТО ЖЕ сообщение (по edit_bot_message_id)
+    mock_message.bot.edit_message_media.assert_called_once()
+    call_kwargs = mock_message.bot.edit_message_media.call_args.kwargs
+    assert call_kwargs["message_id"] == 456
+    assert call_kwargs["chat_id"] == 123
+
+    # 3. Новое фото/меню НЕ отправляется (answer_photo не вызывался)
+    # (message.answer вызывается только для штатного временного уведомления "✅ ... обновлено!")
+    mock_message.answer_photo.assert_not_called()
