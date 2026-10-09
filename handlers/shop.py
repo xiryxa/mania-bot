@@ -12,6 +12,8 @@ from aiogram.types import (
     Message,
 )
 
+from urllib.parse import urlparse
+
 from db import(
     escape_html,
     get_product_by_id,
@@ -23,6 +25,16 @@ from db import(
     truncate_plain
 )
 from config import CATEGORY_MAP
+
+def _is_valid_url_for_tg(url: str) -> bool:
+    """Защитная проверка URL для Telegram API (требует наличия точки в домене или localhost)"""
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urlparse(url)
+        return parsed.scheme in ("http", "https") and ("." in parsed.netloc or parsed.netloc == "localhost")
+    except Exception:
+        return False
 
 # ==================== НАСТРОЙКА ====================
 logger = logging.getLogger(__name__)
@@ -219,24 +231,25 @@ async def show_product_card(
             )
         )
 
-    # Формирование кнопок URL
-    url_buttons = []
-    if product.get("ozon_url"):
-        url_buttons.append(InlineKeyboardButton(text="🛍 Ozon", url=product["ozon_url"], style="primary"))
-    if product.get("youtube_url"):
-        url_buttons.append(InlineKeyboardButton(text="▶️ Обзор", url=product["youtube_url"], style="danger"))
+    # Формирование кнопок URL (Ozon и YouTube в одной строке)
+    url_row = []
+    ozon_url = product.get("ozon_url")
+    if ozon_url and _is_valid_url_for_tg(ozon_url):
+        url_row.append(InlineKeyboardButton(text="🛍 Ozon", url=ozon_url, style="primary"))
+    youtube_url = product.get("youtube_url")
+    if youtube_url and _is_valid_url_for_tg(youtube_url):
+        url_row.append(InlineKeyboardButton(text="▶️ Обзор", url=youtube_url, style="danger"))
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            nav_buttons if nav_buttons else [],
-            [
-                InlineKeyboardButton(text=order_text, callback_data=order_callback, style="success"),
-                InlineKeyboardButton(text="📋 Список", callback_data="shop_show_list"),
-            ],
-            url_buttons if url_buttons else [],
-            [InlineKeyboardButton(text="⬅️ Назад к выбору", callback_data="shop_manks_menu")],
-        ]
-    )
+    keyboard_rows = []
+    if nav_buttons:
+        keyboard_rows.append(nav_buttons)
+    if url_row:
+        keyboard_rows.append(url_row)
+    keyboard_rows.append([InlineKeyboardButton(text=order_text, callback_data=order_callback, style="success")])
+    keyboard_rows.append([InlineKeyboardButton(text="📋 Список", callback_data="shop_show_list")])
+    keyboard_rows.append([InlineKeyboardButton(text="⬅️ Назад к выбору", callback_data="shop_manks_menu")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
     # Если есть фото — используем edit_message_media
     if product.get("image_file_id"):

@@ -144,10 +144,15 @@ async def show_admin_product(message: Message, state: FSMContext, page: int):
         f"📌 <b>Название:</b> {escape_html(product['name'])}\n"
         f"📝 <b>Описание:</b> "
     )
+    ozon_status = "✅" if product["ozon_url"] else "❌"
+    youtube_status = "✅" if product["youtube_url"] else "❌"
+
     tail = (
         f"\n💰 <b>Цена:</b> {product['price']} ₽\n"
         f"🏷️ <b>Категория:</b> {escape_html(product['category'])}\n"
         f"{stock_status}\n"
+        f"🛍 <b>Ozon:</b> {ozon_status}\n"
+        f"▶️ <b>YouTube:</b> {youtube_status}\n"
         f"📷 <b>Фото:</b> {'✅ есть' if product['image_file_id'] else '❌ нет'}"
     )
 
