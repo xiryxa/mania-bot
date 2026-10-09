@@ -26,15 +26,43 @@ from db import(
 )
 from config import CATEGORY_MAP
 
+
 def _is_valid_url_for_tg(url: str) -> bool:
-    """Защитная проверка URL для Telegram API (требует наличия точки в домене или localhost)"""
-    if not url or not isinstance(url, str):
+    """Защитная проверка URL: только http/https и разрешённые домены."""
+    if not isinstance(url, str) or not url.strip():
         return False
+
+    if any(char.isspace() for char in url):
+        return False
+
     try:
         parsed = urlparse(url)
-        return parsed.scheme in ("http", "https") and ("." in parsed.netloc or parsed.netloc == "localhost")
+
+        if parsed.scheme not in ("http", "https"):
+            return False
+
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        if parsed.username is not None or parsed.password is not None:
+            return False
+
+        hostname = hostname.lower()
+        allowed_domains = ("ozon.ru", "youtube.com", "youtu.be")
+
+        if not any(
+            hostname == domain or hostname.endswith("." + domain)
+            for domain in allowed_domains
+        ):
+            return False
+
+        # Обращение к свойству port проверяет корректность порта.
+        _ = parsed.port
+
+        return True
     except Exception:
         return False
+
 
 # ==================== НАСТРОЙКА ====================
 logger = logging.getLogger(__name__)
