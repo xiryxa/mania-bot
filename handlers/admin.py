@@ -602,6 +602,7 @@ async def confirm_cancel_callback(callback: CallbackQuery, state: FSMContext):
                 InlineKeyboardButton(
                     text="✅ Да, отменить заказ",
                     callback_data=f"ostatus_{order_id}_cancelled",
+                    style="danger",
                 )
             ],
             [
