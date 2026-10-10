@@ -1,4 +1,4 @@
-# ==================== ИМПОРТЫ ====================
+﻿# ==================== ИМПОРТЫ ====================
 import logging
 from aiogram.types import InputMediaPhoto
 from aiogram import F, Router
@@ -28,35 +28,27 @@ from config import CATEGORY_MAP
 
 
 def _is_valid_url_for_tg(url: str) -> bool:
-    """Защитная проверка URL: только http/https и разрешённые домены."""
-    if not isinstance(url, str) or not url.strip():
+    """Минимальная проверка URL: только http/https без опасных схем."""
+    if not isinstance(url, str):
         return False
 
-    if any(char.isspace() for char in url):
+    url = url.strip()
+    if not url:
         return False
 
     try:
+        from urllib.parse import urlparse
         parsed = urlparse(url)
 
         if parsed.scheme not in ("http", "https"):
             return False
-
-        hostname = parsed.hostname
-        if not hostname:
+        if not parsed.hostname:
             return False
+        # Защита от фишинговых URL вида http://user:pass@domain.com
         if parsed.username is not None or parsed.password is not None:
             return False
 
-        hostname = hostname.lower()
-        allowed_domains = ("ozon.ru", "youtube.com", "youtu.be")
-
-        if not any(
-            hostname == domain or hostname.endswith("." + domain)
-            for domain in allowed_domains
-        ):
-            return False
-
-        # Обращение к свойству port проверяет корректность порта.
+        # Проверка корректности порта (выбросит ValueError, если порт нечисловой или > 65535)
         _ = parsed.port
 
         return True
@@ -157,7 +149,7 @@ async def shop_products_list(callback: CallbackQuery, state: FSMContext):
     """
     category = callback.data.split("_")[2]
 
-    
+
     category_ru = CATEGORY_MAP.get(category, category)
     products = await get_products_by_category(category_ru)
 
@@ -509,8 +501,8 @@ async def shop_manks_back(callback: CallbackQuery, state: FSMContext):
             parse_mode=ParseMode.HTML,
         )
     await callback.answer()
-    
-    
+
+
 # ==================== ПЕРЕХОД В МАГАЗИН ИЗ ГЛАВНОГО МЕНЮ ====================
 @router.callback_query(F.data == "start_shop")
 async def start_shop_callback(callback: CallbackQuery):
@@ -532,21 +524,19 @@ async def start_shop_callback(callback: CallbackQuery):
         parse_mode=ParseMode.HTML,
     )
     await callback.answer()
-    
-    
+
+
 @router.callback_query(F.data.startswith("subscribe_product_"))
 async def subscribe_product_callback(callback: CallbackQuery):
     """Обработка нажатия на кнопку 'Оповестить о наличии'"""
     product_id = int(callback.data.split("_")[2])
     user_id = callback.from_user.id
-    
+
     from db import subscribe_to_product
     result = await subscribe_to_product(user_id, product_id)
-    
+
     if result["success"]:
         await callback.answer("🔔 Вы получите уведомление, когда товар появится в наличии!", show_alert=True)
     else:
         # Используем фактическое сообщение из БД
         await callback.answer(result["message"], show_alert=True)
-        
-        

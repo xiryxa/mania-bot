@@ -1,4 +1,4 @@
-# ==================== ИМПОРТЫ ====================
+﻿# ==================== ИМПОРТЫ ====================
 import logging
 from aiogram import Router, F
 from aiogram.enums import ParseMode
@@ -72,11 +72,57 @@ async def order_product_callback(callback: CallbackQuery, state: FSMContext):
 async def show_quantity_selector(message: Message, state: FSMContext):
     """Показать счётчик количества"""
     data = await state.get_data()
-    quantity = data.get("quantity", 1)
+    # Безопасная обработка: отсекаем bool, float, str, None и значения < 1
+    raw_quantity = data.get("quantity", 1)
+    if isinstance(raw_quantity, bool) or not isinstance(raw_quantity, int) or raw_quantity < 1:
+        quantity = 1
+        await state.update_data(quantity=1)
+    else:
+        quantity = raw_quantity
     product_id = data.get("product_id")
     product = await get_product_by_id(product_id)
+    # 1. Проверка на удаление или деактивацию товара
+    if not product or not product.get("is_active"):
+        await state.clear()
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад в каталог", callback_data="shop_manks_menu")]
+        ])
+        text = "❌ Этот товар больше не доступен для заказа."
+        try:
+            if getattr(message, "photo", None):
+                await message.edit_caption(caption=text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+            else:
+                await message.edit_text(text=text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        except Exception as e:
+            logger.warning(f"show_quantity_selector edit failed: {e}, sending new")
+            await message.answer(text=text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        return
+
     current_stock = await get_product_stock(product_id)
 
+    # 2. Проверка на нулевой или отрицательный остаток
+    if current_stock <= 0:
+        await state.clear()
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад в каталог", callback_data="shop_manks_menu")]
+        ])
+        text = f"❌ Товар «{escape_html(product['name'])}» временно отсутствует в наличии."
+        try:
+            if getattr(message, "photo", None):
+                await message.edit_caption(caption=text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+            else:
+                await message.edit_text(text=text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        except Exception as e:
+            logger.warning(f"show_quantity_selector edit failed: {e}, sending new")
+            await message.answer(text=text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        return
+
+    # 3. Корректировка количества, если оно превышает актуальный остаток
+    if quantity > current_stock:
+        quantity = current_stock
+        await state.update_data(quantity=quantity)
+
+    # 4. Штатный рендер селектора
     text = (
         f"🔹 <b>{escape_html(product['name'])}</b>\n"
         f"💰 {product['price']} ₽\n"
@@ -99,14 +145,14 @@ async def show_quantity_selector(message: Message, state: FSMContext):
     )
 
     try:
-        await message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        if getattr(message, "photo", None):
+            await message.edit_caption(caption=text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        else:
+            await message.edit_text(text=text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
     except Exception as e:
         logger.warning(f"show_quantity_selector edit failed: {e}, sending new")
-        try:
-            await message.delete()
-        except Exception:
-            pass
-        await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        # Удалено: await message.delete() — исходная карточка сохраняется
+        await message.answer(text=text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 
 @router.callback_query(StateFilter(OrderState.quantity), F.data.startswith("qty_"))
