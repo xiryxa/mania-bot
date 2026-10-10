@@ -1,4 +1,4 @@
-# ==================== ИМПОРТЫ ====================
+﻿# ==================== ИМПОРТЫ ====================
 import html
 import logging
 from datetime import datetime, timezone
@@ -243,7 +243,7 @@ async def get_product_by_id(product_id: int):
     async with aiosqlite.connect(DATABASE) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT id, name, description, price, category, quantity, ozon_url, youtube_url, image_file_id "
+            "SELECT id, name, description, price, category, quantity, ozon_url, youtube_url, image_file_id, is_active "
             "FROM products WHERE id = ?",
             (product_id,),
         )
@@ -529,27 +529,38 @@ async def create_order_and_decrease_stock(
             (product_id,),
         )
         result = await cursor.fetchone()
-
         if not result:
             return {"success": False, "message": "Товар не найден.", "order_id": None}
 
         unit_price = result["price"]
 
-        # 3. Атомарное списание остатка с проверкой
+        # 3. Атомарное списание остатка с проверкой активности и количества
         cursor = await db.execute(
             "UPDATE products SET quantity = quantity - ? "
-            "WHERE id = ? AND quantity >= ?",
+            "WHERE id = ? AND quantity >= ? AND is_active = 1",
             (quantity, product_id, quantity),
         )
 
         if cursor.rowcount != 1:
-            # Товара не хватило — узнаём актуальный остаток для сообщения
+            # Узнаём причину неудачи: товар не найден, неактивен или недостаточно остатка
             cursor = await db.execute(
-                "SELECT quantity FROM products WHERE id = ?",
+                "SELECT quantity, is_active FROM products WHERE id = ?",
                 (product_id,),
             )
             stock_row = await cursor.fetchone()
-            current_stock = stock_row["quantity"] if stock_row else 0
+            if not stock_row:
+                return {
+                    "success": False,
+                    "message": "Товар не найден.",
+                    "order_id": None,
+                }
+            if stock_row["is_active"] != 1:
+                return {
+                    "success": False,
+                    "message": "Товар недоступен для заказа.",
+                    "order_id": None,
+                }
+            current_stock = stock_row["quantity"]
             return {
                 "success": False,
                 "message": f"Недостаточно товара на складе. Доступно: {current_stock} шт.",

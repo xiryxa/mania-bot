@@ -54,6 +54,7 @@ async def order_product_callback(callback: CallbackQuery, state: FSMContext):
     product_id = int(callback.data.split("_")[2])
     product = await get_product_by_id(product_id)
     if not product:
+        await state.clear()
         try:
             await callback.message.edit_text("❌ Товар не найден.")
         except Exception as e:
@@ -108,7 +109,7 @@ async def show_quantity_selector(message: Message, state: FSMContext):
         await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 
-@router.callback_query(F.data.startswith("qty_"))
+@router.callback_query(StateFilter(OrderState.quantity), F.data.startswith("qty_"))
 async def quantity_control(callback: CallbackQuery, state: FSMContext):
     """Управление количеством: ➖, ➕, ✅ Далее"""
     action = callback.data
@@ -323,6 +324,15 @@ async def order_address(message: Message, state: FSMContext):
 
     await state.update_data(delivery_address=address, user=user)
     await ask_comment(message, state)
+
+
+@router.message(StateFilter(OrderState.address), ~F.text)
+async def order_address_invalid_type(message: Message, state: FSMContext):
+    """Обработка нетекстовых сообщений на шаге ввода адреса"""
+    await message.answer(
+        "❌ Пожалуйста, отправьте адрес доставки обычным текстом.\n\n"
+        "Например: г. Москва, ул. Ленина, д. 1, кв. 10"
+    )
 
 
 async def ask_comment(message: Message, state: FSMContext):
