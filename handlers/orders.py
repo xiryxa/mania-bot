@@ -82,7 +82,7 @@ async def show_quantity_selector(message: Message, state: FSMContext):
     product_id = data.get("product_id")
     product = await get_product_by_id(product_id)
     # 1. Проверка на удаление или деактивацию товара
-    if not product or not product.get("is_active"):
+    if not product or not product["is_active"]:
         await state.clear()
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Назад в каталог", callback_data="shop_manks_menu")]

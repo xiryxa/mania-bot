@@ -15,9 +15,17 @@ async def notify_back_in_stock(product_id: int, bot: Bot) -> None:
     if not subscribers:
         return
 
-    # Получаем название товара для персонализации сообщения
+    # Получаем объект товара из БД
     product = await get_product_by_id(product_id)
-    product_name = escape_html(product["name"] if product and "name" in product else "товар")
+    
+    # Исправление: product - это sqlite3.Row. Оператор "in" проверяет значения, а не ключи.
+    # Поэтому мы просто проверяем наличие объекта и безопасно берем имя по ключу.
+    if product:
+        product_name = escape_html(str(product["name"]))
+    else:
+        # Этот блок сработает ТОЛЬКО если товар реально был удален из БД
+        product_name = f"Товар (ID: {product_id})"
+        logger.warning(f"⚠️ Товар ID {product_id} физически не найден в БД при попытке уведомления.")
 
     for user_id in subscribers:
         try:
