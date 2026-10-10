@@ -375,6 +375,12 @@ async def shop_show_list(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
+    # Актуализация остатков из БД перед отображением списка
+    for product in products:
+        product["quantity"] = await get_product_stock(product["id"])
+    # Сохраняем обновлённый кэш в FSM, чтобы он не оставался устаревшим
+    await state.update_data(shop_products=products)
+
     text = f"📋 <b>Товары в категории «{category}»:</b>\n\n"
     for i, product in enumerate(products, 1):
         quantity = product.get("quantity", 0)
