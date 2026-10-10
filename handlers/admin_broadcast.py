@@ -11,7 +11,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
-from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 
 from db import get_all_user_ids
 from filters import IsAdmin
@@ -234,18 +234,49 @@ async def broadcast_get_text(message: Message, state: FSMContext):
     await state.set_state(BroadcastState.confirming)
 
 
+async def _delete_after_delay(message: Message, delay: int = 3):
+    """Удаляет сообщение через указанное время."""
+    await asyncio.sleep(delay)
+    try:
+        await message.delete()
+    except (TelegramBadRequest, TelegramForbiddenError) as e:
+        logger.info(f"Delayed delete failed: {e}")
+
+
 # ==================== ОТМЕНА ====================
 @router.callback_query(F.data == "broadcast_cancel", IsAdmin())
 async def broadcast_cancel(callback: CallbackQuery, state: FSMContext):
     """Отмена рассылки на любом этапе."""
     await state.clear()
-
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
-
-    await callback.message.answer("❌ Рассылка отменена.")
+    message = callback.message
+    edited = False
+    # Выбираем способ редактирования по типу сообщения
+    if message.photo:
+        try:
+            await message.edit_caption("❌ Рассылка отменена.")
+            edited = True
+        except (TelegramBadRequest, TelegramForbiddenError) as e:
+            logger.info(f"edit_caption failed: {e}")
+    else:
+        try:
+            await message.edit_text("❌ Рассылка отменена.")
+            edited = True
+        except (TelegramBadRequest, TelegramForbiddenError) as e:
+            logger.info(f"edit_text failed: {e}")
+    if not edited:
+        # Fallback: удаляем и отправляем новое
+        try:
+            await message.delete()
+        except (TelegramBadRequest, TelegramForbiddenError) as e:
+            logger.info(f"delete failed: {e}")
+        try:
+            new_msg = await message.answer("❌ Рассылка отменена.")
+            asyncio.create_task(_delete_after_delay(new_msg))
+        except (TelegramBadRequest, TelegramForbiddenError) as e:
+            logger.warning(f"Failed to send fallback cancel message: {e}")
+    else:
+        # Успешно отредактировали — удаляем через 3 секунды
+        asyncio.create_task(_delete_after_delay(message))
     await callback.answer()
 
 
