@@ -500,8 +500,8 @@ async def product_add_price(message: Message, state: FSMContext):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🦆 Goose", callback_data="category_goose")],
-            [InlineKeyboardButton(text="🦆 Duck", callback_data="category_duck")],
+            [InlineKeyboardButton(text="🦢 Гусь", callback_data="category_goose")],
+            [InlineKeyboardButton(text="🦆 Утка", callback_data="category_duck")],
             [InlineKeyboardButton(text="⬅️ Отмена", callback_data="product_add_cancel")],
         ]
     )
